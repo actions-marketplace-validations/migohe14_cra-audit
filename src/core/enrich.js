@@ -103,7 +103,33 @@ async function fetchNpmMeta(name, timeout) {
     repo,
     deprecated,
     homepage: doc.homepage || null,
+    licenseByVersion: licensesByVersion(doc),
   };
+}
+
+/**
+ * Builds a compact `{ version: licenseId }` map from a registry document so the
+ * report can document a license even when it is absent from the lockfile or
+ * not installed on disk (common with pnpm/Yarn).
+ */
+function licensesByVersion(doc) {
+  const map = {};
+  const versions = doc.versions && typeof doc.versions === 'object' ? doc.versions : {};
+  for (const [version, vDoc] of Object.entries(versions)) {
+    const license = normalizeRegistryLicense(vDoc);
+    if (license) map[version] = license;
+  }
+  return map;
+}
+
+function normalizeRegistryLicense(vDoc) {
+  if (!vDoc) return null;
+  if (typeof vDoc.license === 'string') return vDoc.license;
+  if (vDoc.license && typeof vDoc.license.type === 'string') return vDoc.license.type;
+  if (Array.isArray(vDoc.licenses) && vDoc.licenses.length) {
+    return vDoc.licenses.map((l) => (typeof l === 'string' ? l : l && l.type)).filter(Boolean).join(' OR ') || null;
+  }
+  return null;
 }
 
 async function fetchGithubRepo(owner, name, timeout, token) {
@@ -163,7 +189,7 @@ function buildSignals(comp, npm, gh) {
   const signals = {
     name: comp.name,
     version: comp.version,
-    license: comp.license || null,
+    license: comp.license || (npm && npm.licenseByVersion && npm.licenseByVersion[comp.version]) || null,
     latest: npm ? npm.latest : null,
     outdated: Boolean(npm && npm.latest && comp.version && npm.latest !== comp.version),
     lastPublish: npm ? npm.lastPublish : null,

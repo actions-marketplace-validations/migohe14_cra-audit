@@ -44,7 +44,7 @@ function loadPolicy(projectRoot, explicitPath) {
       ? explicitPath
       : path.join(projectRoot, explicitPath);
     if (!exists(configPath)) {
-      throw new Error(`No se encontró el archivo de configuración: ${explicitPath}`);
+      throw new Error(`Configuration file not found: ${explicitPath}`);
     }
   } else {
     for (const name of CONFIG_FILENAMES) {

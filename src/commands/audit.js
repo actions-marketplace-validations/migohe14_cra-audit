@@ -43,7 +43,7 @@ function resolveRoot(flags) {
   const start = flags.cwd || process.cwd();
   const root = findProjectRoot(start);
   if (!root) {
-    logger.error('No se encontró ningún package.json. Ejecuta el comando dentro de un proyecto npm.');
+    logger.error('No package.json found. Run the command inside an npm project.');
     return null;
   }
   return root;

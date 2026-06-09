@@ -3,7 +3,7 @@
 > Compliance audit for the **Cyber Resilience Act** (Regulation EU 2024/2847) and the **BSI TR-03183** technical guideline, for npm projects.
 
 `cra-audit` audits the installed dependencies of an npm project and checks the key requirements that the CRA imposes on "products with digital elements". It runs directly with `npx`, **without installation**, and has **no production dependencies** to minimize its own supply-chain surface.
-
+It reads the project lockfile natively, so it works with **npm** (`package-lock.json` / `npm-shrinkwrap.json`), **Yarn** (classic v1 and Berry v2+ `yarn.lock`) and **pnpm** (`pnpm-lock.yaml`) — auditing the exact versions each package manager pinned.
 ```bash
 # Run ALL the law's checks (Vulnerabilities + Licenses + SBOM)
 npx cra-audit
@@ -24,13 +24,13 @@ Under the hood, the package runs the checks derived from the CRA legal obligatio
 
 ### 1. Automatic SBOM validation
 
-Generates and validates a **Software Bill of Materials (SBOM)** in a machine-readable format —**CycloneDX 1.5** or **SPDX 2.3**— from the `package-lock.json` / `npm-shrinkwrap.json`. It verifies the **minimum elements** required by TR-03183 §6 for every component: name, version, unique identifier (`purl`), cryptographic integrity hash and license.
+Generates and validates a **Software Bill of Materials (SBOM)** in a machine-readable format —**CycloneDX 1.5** or **SPDX 2.3**— from the `package-lock.json` / `npm-shrinkwrap.json`, `yarn.lock` or `pnpm-lock.yaml`. It verifies the **minimum elements** required by TR-03183 §6 for every component: name, version, unique identifier (`purl`), cryptographic integrity hash and license.
 
 > CRA Annex I · TR-03183 Part 2 — *"Transparency through SBOM"*.
 
 ### 2. "Zero known vulnerabilities" audit
 
-Scans **direct and transitive** dependencies (from the lockfile) with `npm audit` and blocks the audit if there are exploitable vulnerabilities above the configured threshold.
+Scans **direct and transitive** dependencies (from the lockfile) with `npm audit` and blocks the audit if there are exploitable vulnerabilities above the configured threshold. For Yarn/pnpm projects (which have no npm lockfile), `cra-audit` synthesizes a temporary `package-lock.json` from the exact versions pinned in `yarn.lock` / `pnpm-lock.yaml` and runs `npm audit --package-lock-only` against it, so the scanned versions match what the package manager actually resolved.
 
 > CRA Art. 13 — *products must be placed on the market without known exploitable vulnerabilities*.
 
@@ -237,7 +237,7 @@ const signals = await enrichComponents(components, { network: true, github: true
 
 - Node.js >= 18 (uses native `fetch` and `node --test`).
 - `npm` available on the `PATH` (for `npm audit`).
-- A `package-lock.json` or `npm-shrinkwrap.json` present (run `npm install` if missing).
+- A lockfile present: `package-lock.json` / `npm-shrinkwrap.json` (npm), `yarn.lock` (Yarn classic or Berry) or `pnpm-lock.yaml` (pnpm). Run `npm install` / `yarn` / `pnpm install` if missing.
 
 ## Legal notice
 

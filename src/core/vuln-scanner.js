@@ -1,6 +1,11 @@
 'use strict';
 
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { runJson } = require('../utils/exec');
+const { exists } = require('../utils/fs');
+const { parseLockfile, toNpmLockfile } = require('./lockfile-parser');
 
 const SEVERITY_ORDER = ['info', 'low', 'moderate', 'high', 'critical'];
 
@@ -9,22 +14,47 @@ const SEVERITY_ORDER = ['info', 'low', 'moderate', 'high', 'critical'];
  * `npm audit --json`. The CRA requires products to ship "without known
  * exploitable vulnerabilities", so this is the core gate of the audit.
  *
+ * npm projects are audited in place. Yarn/pnpm projects (which have no npm
+ * lockfile) are audited against a synthetic `package-lock.json` generated from
+ * their lockfile, preserving the exact installed versions.
+ *
  * @param {string} projectRoot
  * @param {{ production?: boolean }} [options]
  */
 function scanVulnerabilities(projectRoot, { production = false } = {}) {
+  if (hasNpmLockfile(projectRoot)) {
+    return runNpmAudit(projectRoot, { production });
+  }
+
+  const parsed = parseLockfile(projectRoot);
+  if (parsed.ok && parsed.components.length > 0) {
+    return auditSynthesized(parsed, { production });
+  }
+
+  // No usable lockfile: run npm audit in place so the user gets npm's own error.
+  return runNpmAudit(projectRoot, { production });
+}
+
+function hasNpmLockfile(projectRoot) {
+  return exists(path.join(projectRoot, 'package-lock.json')) ||
+    exists(path.join(projectRoot, 'npm-shrinkwrap.json'));
+}
+
+/** Runs `npm audit --json` in the given directory. */
+function runNpmAudit(cwd, { production = false, packageLockOnly = false } = {}) {
   const args = ['audit', '--json'];
   if (production) args.push('--omit=dev');
+  if (packageLockOnly) args.push('--package-lock-only');
 
-  const result = runJson('npm', args, { cwd: projectRoot });
+  const result = runJson('npm', args, { cwd });
 
   if (!result.data) {
     return {
       ok: false,
       error:
-        'No se pudo ejecutar `npm audit`. Asegúrate de tener npm instalado y un ' +
-        'package-lock.json presente. ' +
-        (result.stderr ? `Detalle: ${result.stderr.trim()}` : ''),
+        'Could not run `npm audit`. Make sure npm is installed and a ' +
+        'lockfile is present. ' +
+        (result.stderr ? `Detail: ${result.stderr.trim()}` : ''),
       counts: emptyCounts(),
       vulnerabilities: [],
     };
@@ -46,6 +76,32 @@ function scanVulnerabilities(projectRoot, { production = false } = {}) {
   };
 }
 
+/**
+ * Audits a Yarn/pnpm project by materializing a synthetic npm lockfile in a
+ * temporary directory and running `npm audit --package-lock-only` there.
+ */
+function auditSynthesized(parsed, { production = false } = {}) {
+  const { packageJson, packageLock } = toNpmLockfile(parsed);
+  let tmpDir;
+  try {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cra-audit-'));
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify(packageJson, null, 2));
+    fs.writeFileSync(path.join(tmpDir, 'package-lock.json'), JSON.stringify(packageLock, null, 2));
+    return runNpmAudit(tmpDir, { production, packageLockOnly: true });
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Could not analyze vulnerabilities from lockfile ${parsed.lockfileName || ''}: ${err.message}`.trim(),
+      counts: emptyCounts(),
+      vulnerabilities: [],
+    };
+  } finally {
+    if (tmpDir) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+  }
+}
+
 function parseModernReport(data) {
   const counts = emptyCounts();
   const vulnerabilities = [];
@@ -63,14 +119,14 @@ function parseModernReport(data) {
     const advisories = via.filter((v) => typeof v === 'object');
     const sources = advisories.length
       ? advisories.map((adv) => ({
-          title: adv.title || 'Vulnerabilidad conocida',
+          title: adv.title || 'Known vulnerability',
           url: adv.url || null,
           cwe: adv.cwe || [],
           cvss: adv.cvss ? adv.cvss.score : null,
           source: adv.source || null,
           range: adv.range || null,
         }))
-      : [{ title: `Dependencia vulnerable a través de ${via.join(', ')}`, url: null, cwe: [], cvss: null }];
+      : [{ title: `Dependency vulnerable through ${via.join(', ')}`, url: null, cwe: [], cvss: null }];
 
     vulnerabilities.push({
       name,

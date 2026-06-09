@@ -34,13 +34,13 @@ function runAudit(projectRoot, policy, policySource, options = {}) {
     sections.vulnerabilities = vulns;
 
     if (!vulns.ok) {
-      reasons.push({ label: `No se pudieron analizar vulnerabilidades: ${vulns.error}`, passed: false });
+      reasons.push({ label: `Vulnerabilities could not be analyzed: ${vulns.error}`, passed: false });
     } else {
       const blocking = countBlocking(vulns, policy);
       reasons.push({
         label: blocking === 0
-          ? `Sin vulnerabilidades de severidad >= ${policy.failOn}`
-          : `${blocking} vulnerabilidad(es) de severidad >= ${policy.failOn}`,
+          ? `No vulnerabilities of severity >= ${policy.failOn}`
+          : `${blocking} vulnerability(ies) of severity >= ${policy.failOn}`,
         passed: blocking === 0,
       });
     }
@@ -56,12 +56,12 @@ function runAudit(projectRoot, policy, policySource, options = {}) {
 
     if (policy.requireSbom) {
       if (!sbom.ok) {
-        reasons.push({ label: `No se pudo generar el SBOM: ${sbom.error}`, passed: false });
+        reasons.push({ label: `The SBOM could not be generated: ${sbom.error}`, passed: false });
       } else {
         reasons.push({
           label: sbom.validation.valid
-            ? 'SBOM válido según los elementos mínimos de TR-03183'
-            : 'SBOM incompleto respecto a TR-03183',
+            ? 'SBOM valid against the TR-03183 minimum elements'
+            : 'SBOM incomplete with respect to TR-03183',
           passed: sbom.validation.valid,
         });
       }
@@ -74,15 +74,15 @@ function runAudit(projectRoot, policy, policySource, options = {}) {
     sections.licenses = licenses;
 
     if (!licenses.ok) {
-      reasons.push({ label: `No se pudieron analizar licencias: ${licenses.error}`, passed: false });
+      reasons.push({ label: `Licenses could not be analyzed: ${licenses.error}`, passed: false });
     } else {
       const s = licenses.summary;
       const missingFails = policy.licenses.failOnMissing && s.missing.length > 0;
       const licensesPassed = s.denied.length === 0 && s.notAllowed.length === 0 && !missingFails;
       reasons.push({
         label: licensesPassed
-          ? 'Licencias documentadas y conformes con la política'
-          : 'Problemas de licencias detectados (prohibidas, no permitidas o sin documentar)',
+          ? 'Licenses documented and compliant with the policy'
+          : 'License issues detected (denied, not allowed or undocumented)',
         passed: licensesPassed,
       });
     }

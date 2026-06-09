@@ -25,7 +25,7 @@ const { buildHtml } = require('../reporters/html');
 async function visualizeCommand(flags) {
   const projectRoot = findProjectRoot(flags.cwd || process.cwd());
   if (!projectRoot) {
-    logger.error('No se encontró ningún package.json. Ejecuta el comando dentro de un proyecto npm.');
+    logger.error('No package.json found. Run the command inside an npm project.');
     return 1;
   }
 
@@ -42,7 +42,7 @@ async function visualizeCommand(flags) {
     policy = {};
   }
 
-  logger.info(`Analizando ${parsed.components.length} componentes de ${parsed.root.name}@${parsed.root.version}…`);
+  logger.info(`Analyzing ${parsed.components.length} components from ${parsed.root.name}@${parsed.root.version}…`);
 
   // Vulnerabilities + licenses run locally (no network).
   const vulns = scanVulnerabilities(projectRoot, { production: policy.productionOnly });
@@ -53,23 +53,18 @@ async function visualizeCommand(flags) {
   const github = Boolean(flags.github);
   if (network) {
     logger.info(
-      `Consultando metadatos de mantenimiento (npm${github ? ' + GitHub' : ''})…` +
-      (github && !process.env.GITHUB_TOKEN ? color.gray(' (sin GITHUB_TOKEN: límite de 60 req/h)') : '')
+      `Fetching maintenance metadata (npm${github ? ' + GitHub' : ''})…` +
+      (github && !process.env.GITHUB_TOKEN ? color.gray(' (no GITHUB_TOKEN: limited to 60 req/h)') : '')
     );
   } else {
-    logger.info('Modo offline: se omiten metadatos de mantenimiento.');
+    logger.info('Offline mode: maintenance metadata skipped.');
   }
 
-  let lastPct = -1;
   const enrichment = await enrichComponents(parsed.components, {
     network,
     github,
     onProgress: (done, total) => {
-      const pct = Math.floor((done / total) * 100);
-      if (pct !== lastPct && pct % 20 === 0) {
-        logger.detail(`metadatos npm: ${pct}%`);
-        lastPct = pct;
-      }
+      logger.progress('npm metadata', done, total);
     },
   });
 
@@ -78,13 +73,13 @@ async function visualizeCommand(flags) {
 
   const outPath = resolveOutputPath(projectRoot, flags.output);
   fs.writeFileSync(outPath, html, 'utf8');
-  logger.success(`Informe visual escrito en: ${outPath}`);
+  logger.success(`Visual report written to: ${outPath}`);
 
   if (!flags.noOpen) {
     openInBrowser(outPath);
-    logger.detail('Abriendo en el navegador…');
+    logger.detail('Opening in the browser…');
   } else {
-    logger.detail(`Ábrelo en tu navegador: file://${outPath.replace(/\\/g, '/')}`);
+    logger.detail(`Open it in your browser: file://${outPath.replace(/\\/g, '/')}`);
   }
 
   return 0;
@@ -107,11 +102,16 @@ function buildModel(parsed, vulns, licenses, enrichment) {
     const lic = licByKey.get(key) || null;
     const enr = enrichment.get(key) || {};
 
+    const license = (lic && lic.license) || c.license || enr.license || null;
+    const licenseStatus = (lic && lic.license)
+      ? lic.status
+      : (license ? 'ok' : 'missing');
+
     return {
       name: c.name,
       version: c.version,
-      license: (lic && lic.license) || c.license || null,
-      licenseStatus: lic ? lic.status : (c.license ? 'ok' : 'missing'),
+      license,
+      licenseStatus,
       severity: vuln ? vuln.severity : 'none',
       fixAvailable: vuln ? Boolean(vuln.fixAvailable) : false,
       latest: enr.latest || null,

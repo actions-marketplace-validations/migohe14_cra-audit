@@ -79,8 +79,8 @@ async function main(argv) {
       return 0;
 
     default:
-      logger.error(`Comando desconocido: "${command}".`);
-      logger.log(`Ejecuta ${color.cyan('cra-audit --help')} para ver los comandos disponibles.`);
+      logger.error(`Unknown command: "${command}".`);
+      logger.log(`Run ${color.cyan('cra-audit --help')} to see the available commands.`);
       return 1;
   }
 }
@@ -160,56 +160,56 @@ function setFlag(flags, name, value) {
 function printHelp() {
   const c = color;
   logger.log(`
-${c.bold('cra-audit')} — Auditoría de cumplimiento del Cyber Resilience Act (UE 2024/2847)
-            y la directriz técnica BSI TR-03183 para proyectos npm.
+${c.bold('cra-audit')} — Cyber Resilience Act (EU 2024/2847) compliance audit
+            and the BSI TR-03183 technical guideline, for npm projects.
 
-${c.bold('USO')}
-  npx cra-audit [comando] [opciones]
+${c.bold('USAGE')}
+  npx cra-audit [command] [options]
 
-${c.bold('COMANDOS')}
-  ${c.cyan('audit')}                 Ejecuta TODAS las comprobaciones (vulnerabilidades + SBOM + licencias). Por defecto.
-  ${c.cyan('visualize')}             Genera un informe HTML interactivo (SBOM, licencias, versiones y mantenimiento).
-  ${c.cyan('sbom generate')}         Genera un SBOM (CycloneDX o SPDX) y lo imprime o guarda.
-  ${c.cyan('sbom check')}            Valida que el SBOM cumple los elementos mínimos de TR-03183.
-  ${c.cyan('vulnerabilities')}       Analiza solo vulnerabilidades conocidas (alias: vuln).
-  ${c.cyan('licenses')}              Analiza solo las licencias de las dependencias.
-  ${c.cyan('help')}                  Muestra esta ayuda.
+${c.bold('COMMANDS')}
+  ${c.cyan('audit')}                 Run ALL the checks (vulnerabilities + SBOM + licenses). Default.
+  ${c.cyan('visualize')}             Generate an interactive HTML report (SBOM, licenses, versions and maintenance).
+  ${c.cyan('sbom generate')}         Generate an SBOM (CycloneDX or SPDX) and print or save it.
+  ${c.cyan('sbom check')}            Validate that the SBOM meets the TR-03183 minimum elements.
+  ${c.cyan('vulnerabilities')}       Analyze known vulnerabilities only (alias: vuln).
+  ${c.cyan('licenses')}              Analyze dependency licenses only.
+  ${c.cyan('help')}                  Show this help.
 
-${c.bold('OPCIONES')}
-  ${c.cyan('--visualize, -V')}       Atajo para generar y abrir el informe HTML interactivo.
-  ${c.cyan('--github')}              Enriquece el informe visual con datos de GitHub (último commit, contribuidores, stars).
-  ${c.cyan('--offline')}             No consulta la red al visualizar (omite metadatos de mantenimiento).
-  ${c.cyan('--no-open')}             No abre el informe HTML en el navegador automáticamente.
-  ${c.cyan('--sbom')}                Atajo equivalente a "sbom check".
-  ${c.cyan('--format <fmt>')}        Formato del SBOM: cyclonedx (def.) | spdx.
-  ${c.cyan('--fail-on <sev>')}       Severidad mínima que hace fallar la auditoría: info|low|moderate|high|critical.
-  ${c.cyan('--production, --prod')}  Audita solo dependencias de producción (omite devDependencies).
-  ${c.cyan('--no-sbom')}             No exige SBOM en la auditoría completa.
-  ${c.cyan('--json')}                Salida en JSON legible por máquina.
-  ${c.cyan('--output, -o <ruta>')}   Escribe el resultado/SBOM/HTML en un archivo.
-  ${c.cyan('--input, -i <ruta>')}    SBOM existente a validar (para "sbom check").
-  ${c.cyan('--config, -c <ruta>')}   Ruta a la política de seguridad (.cra-audit.json).
-  ${c.cyan('--cwd <ruta>')}          Directorio del proyecto a auditar.
-  ${c.cyan('--no-color')}            Desactiva los colores.
-  ${c.cyan('--version, -v')}         Muestra la versión.
-  ${c.cyan('--help, -h')}            Muestra esta ayuda.
+${c.bold('OPTIONS')}
+  ${c.cyan('--visualize, -V')}       Shortcut to generate and open the interactive HTML report.
+  ${c.cyan('--github')}              Enrich the visual report with GitHub data (last commit, contributors, stars).
+  ${c.cyan('--offline')}             Do not query the network when visualizing (skips maintenance metadata).
+  ${c.cyan('--no-open')}             Do not open the HTML report in the browser automatically.
+  ${c.cyan('--sbom')}                Shortcut equivalent to "sbom check".
+  ${c.cyan('--format <fmt>')}        SBOM format: cyclonedx (default) | spdx.
+  ${c.cyan('--fail-on <sev>')}       Minimum severity that fails the audit: info|low|moderate|high|critical.
+  ${c.cyan('--production, --prod')}  Audit production dependencies only (skips devDependencies).
+  ${c.cyan('--no-sbom')}             Do not require an SBOM in the full audit.
+  ${c.cyan('--json')}                Machine-readable JSON output.
+  ${c.cyan('--output, -o <path>')}   Write the result/SBOM/HTML to a file.
+  ${c.cyan('--input, -i <path>')}    Existing SBOM to validate (for "sbom check").
+  ${c.cyan('--config, -c <path>')}   Path to the security policy (.cra-audit.json).
+  ${c.cyan('--cwd <path>')}          Project directory to audit.
+  ${c.cyan('--no-color')}            Disable colors.
+  ${c.cyan('--version, -v')}         Show the version.
+  ${c.cyan('--help, -h')}            Show this help.
 
-${c.bold('EJEMPLOS')}
-  ${c.gray('# Auditoría completa de cumplimiento CRA')}
+${c.bold('EXAMPLES')}
+  ${c.gray('# Full CRA compliance audit')}
   npx cra-audit
 
-  ${c.gray('# Informe visual interactivo (HTML) con datos de mantenimiento')}
+  ${c.gray('# Interactive visual report (HTML) with maintenance data')}
   npx cra-audit --visualize
   npx cra-audit visualize --github
 
-  ${c.gray('# Solo la parte del SBOM')}
+  ${c.gray('# Just the SBOM part')}
   npx cra-audit --sbom
   npx cra-audit sbom check
 
-  ${c.gray('# Generar un SBOM CycloneDX en disco')}
+  ${c.gray('# Generate a CycloneDX SBOM on disk')}
   npx cra-audit sbom generate -o sbom.cdx.json
 
-  ${c.gray('# Fallar solo ante vulnerabilidades críticas, en CI')}
+  ${c.gray('# Fail only on critical vulnerabilities, in CI')}
   npx cra-audit --fail-on critical --production --json -o cra-report.json
 `);
 }

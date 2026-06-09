@@ -80,6 +80,25 @@ const logger = {
   detail(msg) {
     this.log(`  ${color.gray(msg)}`);
   },
+  /**
+   * Renders an in-place progress bar with a percentage and a done/total count.
+   * On a TTY the same line is rewritten on each call; a trailing newline is
+   * emitted once `done >= total`. On non-TTY streams nothing is written to
+   * avoid flooding logs (CI pipelines), so callers should log a final summary.
+   */
+  progress(label, done, total) {
+    if (!process.stdout.isTTY) return;
+    const ratio = total > 0 ? Math.min(1, done / total) : 1;
+    const pct = Math.floor(ratio * 100);
+    const width = 24;
+    const filled = Math.round(ratio * width);
+    const bar = '█'.repeat(filled) + '░'.repeat(width - filled);
+    const line =
+      `  ${color.gray(label)} ${color.cyan(`[${bar}]`)} ` +
+      `${String(pct).padStart(3)}% ${color.gray(`(${done}/${total})`)}`;
+    process.stdout.write(`\r\x1b[K${line}`);
+    if (done >= total) process.stdout.write('\n');
+  },
 };
 
 module.exports = { logger, color, SYMBOLS };

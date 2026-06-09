@@ -16,7 +16,7 @@ const { validateSbom } = require('../core/sbom-validator');
 function sbomCommand(subcommand, flags) {
   const projectRoot = findProjectRoot(flags.cwd || process.cwd());
   if (!projectRoot) {
-    logger.error('No se encontró ningún package.json. Ejecuta el comando dentro de un proyecto npm.');
+    logger.error('No package.json found. Run the command inside an npm project.');
     return 1;
   }
 
@@ -30,7 +30,7 @@ function sbomCommand(subcommand, flags) {
     return sbomGenerate(projectRoot, format, flags);
   }
 
-  logger.error(`Subcomando de SBOM desconocido: "${action}". Usa "generate" o "check".`);
+  logger.error(`Unknown SBOM subcommand: "${action}". Use "generate" or "check".`);
   return 1;
 }
 
@@ -44,7 +44,7 @@ function sbomGenerate(projectRoot, format, flags) {
   if (flags.output) {
     const outPath = path.isAbsolute(flags.output) ? flags.output : path.join(projectRoot, flags.output);
     writeJson(outPath, result.document);
-    logger.success(`SBOM (${result.format}) con ${result.componentCount} componentes escrito en: ${outPath}`);
+    logger.success(`SBOM (${result.format}) with ${result.componentCount} components written to: ${outPath}`);
   } else {
     process.stdout.write(JSON.stringify(result.document, null, 2) + '\n');
   }
@@ -58,7 +58,7 @@ function sbomCheck(projectRoot, format, flags) {
   if (flags.input) {
     const inPath = path.isAbsolute(flags.input) ? flags.input : path.join(projectRoot, flags.input);
     if (!exists(inPath)) {
-      logger.error(`No se encontró el SBOM indicado: ${flags.input}`);
+      logger.error(`The specified SBOM was not found: ${flags.input}`);
       return 1;
     }
     document = readJson(inPath);
@@ -82,18 +82,18 @@ function sbomCheck(projectRoot, format, flags) {
     return validation.valid ? 0 : 1;
   }
 
-  logger.heading('Validación de SBOM · BSI TR-03183 §6 (elementos mínimos)');
-  logger.detail(`Formato detectado: ${validation.format} · Componentes: ${validation.stats.total}`);
+  logger.heading('SBOM validation · BSI TR-03183 §6 (minimum elements)');
+  logger.detail(`Detected format: ${validation.format} · Components: ${validation.stats.total}`);
   for (const check of validation.checks) {
     const mark = check.passed ? color.green('✔') : color.red('✖');
     logger.log(`  ${mark} ${check.label}`);
   }
   logger.log('');
   if (validation.valid) {
-    logger.success(color.bold('SBOM VÁLIDO — cumple los elementos mínimos exigidos por el CRA.'));
+    logger.success(color.bold('SBOM VALID — meets the minimum elements required by the CRA.'));
     return 0;
   }
-  logger.error(color.bold(`SBOM INVÁLIDO — ${validation.failedChecks.length} requisito(s) sin cumplir.`));
+  logger.error(color.bold(`SBOM INVALID — ${validation.failedChecks.length} requirement(s) not met.`));
   return 1;
 }
 

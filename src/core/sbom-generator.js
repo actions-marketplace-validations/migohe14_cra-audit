@@ -24,7 +24,7 @@ function generateSbom(projectRoot, { format = 'cyclonedx' } = {}) {
   } else if (normalizedFormat === 'cyclonedx' || normalizedFormat === 'cdx') {
     document = buildCycloneDx(parsed);
   } else {
-    return { ok: false, error: `Formato de SBOM no soportado: "${format}". Usa "cyclonedx" o "spdx".` };
+    return { ok: false, error: `Unsupported SBOM format: "${format}". Use "cyclonedx" or "spdx".` };
   }
 
   return {
