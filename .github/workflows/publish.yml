@@ -1,0 +1,37 @@
+name: Publish to npm
+
+# Publishes when a GitHub Release is published. Uses npm Trusted Publishing
+# (OIDC), so no NPM_TOKEN secret is needed and every release carries a signed
+# provenance attestation linking the tarball to this repository and commit.
+#
+# One-time setup on npmjs.com: package settings → "Trusted publishing" →
+# GitHub Actions, repository migohe14/cra-audit, workflow publish.yml.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing requires npm >= 11.5.1.
+      - run: npm install -g npm@latest
+      - name: Check the release tag matches package.json
+        run: |
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
+          if [ "$PKG_VERSION" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json ${PKG_VERSION}"
+            exit 1
+          fi
+      - run: npm test
+      - run: npm publish --provenance --access public

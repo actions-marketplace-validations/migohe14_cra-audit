@@ -1,7 +1,16 @@
 {
   "name": "cra-audit",
-  "version": "0.1.0",
-  "description": "Audita proyectos npm para cumplir con la Ley de Ciberresiliencia europea (CRA, Reglamento UE 2024/2847) y la directriz técnica BSI TR-03183: SBOM (CycloneDX/SPDX), vulnerabilidades conocidas, componentes de terceros y licencias.",
+  "version": "1.0.0",
+  "description": "Audits npm, yarn, and pnpm projects for compliance with the European Cyber Resilience Act (CRA, EU Regulation 2024/2847) and BSI TR-03183: SBOM (CycloneDX/SPDX), known vulnerabilities, third-party components, and licenses.",
+  "homepage": "https://github.com/migohe14/cra-audit#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/migohe14/cra-audit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/migohe14/cra-audit/issues"
+  },
+  "author": "Miguel Gonzalez (https://github.com/migohe14)",
   "keywords": [
     "cra",
     "cyber-resilience-act",
@@ -15,7 +24,11 @@
     "compliance",
     "vulnerabilities",
     "licenses",
-    "supply-chain"
+    "supply-chain",
+    "yarn",
+    "pnpm",
+    "eu",
+    "sbom-validation"
   ],
   "license": "MIT",
   "type": "commonjs",
