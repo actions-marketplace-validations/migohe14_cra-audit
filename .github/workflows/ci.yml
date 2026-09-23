@@ -79,3 +79,23 @@ jobs:
             const log4shell = vex.vulnerabilities.some((v) => v.id === 'CVE-2021-44228');
             if (!kev || !log4shell) process.exit(1);
           " "$SARIF" "$VEX"
+      # Native manifests (requirements.txt, go.mod, pom.xml), no SBOM tool needed.
+      - uses: ./
+        id: manifests
+        continue-on-error: true
+        with:
+          working-directory: test/fixtures/manifests
+          sarif: manifests.sarif
+          upload-sarif: 'false'
+      - name: Check the manifests run
+        env:
+          EXIT_CODE: ${{ steps.manifests.outputs.exit-code }}
+          SARIF: ${{ steps.manifests.outputs.sarif }}
+        run: |
+          test "$EXIT_CODE" = "1"
+          node -e "
+            const results = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).runs[0].results;
+            const uris = new Set(results.map((r) => r.locations[0].physicalLocation.artifactLocation.uri));
+            const log4shell = results.some((r) => r.message.text.includes('CISA KEV') && r.locations[0].physicalLocation.artifactLocation.uri.endsWith('pom.xml'));
+            if (!log4shell || !['requirements.txt', 'go.mod'].every((f) => [...uris].some((u) => u.endsWith(f)))) process.exit(1);
+          " "$SARIF"

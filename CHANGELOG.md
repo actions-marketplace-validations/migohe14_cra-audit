@@ -8,6 +8,16 @@ Releases are automated: pushing a `vX.Y.Z` tag publishes the package to npm
 (with provenance) and creates the GitHub Release from the matching section
 below, so add the section before running `npm version`.
 
+## [2.3.0] — Python, Go and Java without an SBOM tool
+
+### Highlights
+
+- **Native manifests**: `npx cra-audit` in a Python, Go or Java project reads `poetry.lock`, `uv.lock`, `Pipfile.lock` or `requirements*.txt`, `go.mod`, `gradle.lockfile` and `pom.xml` directly — no Syft/cdxgen step and no package.json needed. Same checks as npm: OSV vulnerabilities, malicious packages, CISA KEV with the Art. 14 clock, VEX and SARIF.
+- Findings and SARIF alerts point at the exact line of the manifest.
+- Only exact versions are audited: unpinned requirements, parent/BOM-managed Maven versions and version ranges are skipped and reported, never guessed. `pom.xml` covers declared dependencies (transitive ones need a Maven-generated SBOM).
+- Folders with an npm lockfile *and* one of these manifests are audited as a whole.
+- For these ecosystems the audit warns (instead of failing) about the missing TR-03183 SBOM and undeclared licenses; `sbom generate` explains how to produce one.
+
 ## [2.2.0] — Any language through its SBOM
 
 ### Highlights

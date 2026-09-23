@@ -5,6 +5,7 @@ const path = require('node:path');
 const { readJson } = require('../utils/fs');
 const { parseLockfile } = require('./lockfile-parser');
 const { repositoryUrl } = require('./installed-metadata');
+const { readManifests } = require('./manifest-reader');
 
 /**
  * Organisational CRA duties that can be checked from the repository itself:
@@ -106,9 +107,12 @@ function checkReadiness(projectRoot, { now = new Date() } = {}) {
   // an SBOM produced by their own tooling (Syft, cdxgen…) kept in the repo.
   const parsed = parseLockfile(projectRoot);
   const sbomFile = parsed.ok ? null : findSbomFile(projectRoot);
-  add('sbom', 'SBOM available (npm lockfile or an SBOM file)', 'required', parsed.ok || sbomFile,
+  const manifests = parsed.ok || sbomFile ? null : readManifests(projectRoot);
+  add('sbom', 'Dependency inventory for the SBOM (lockfile, manifest or SBOM file)', 'required', parsed.ok || sbomFile || manifests,
     parsed.ok ? `${parsed.lockfileName} (${parsed.components.length} components)`
-      : sbomFile ? `Found ${sbomFile}` : `${parsed.error} For other ecosystems, commit an SBOM (e.g. sbom.cdx.json).`,
+      : sbomFile ? `Found ${sbomFile}`
+        : manifests ? `${manifests.files.join(', ')} (${manifests.components.length} components)`
+          : 'No lockfile, supported manifest or SBOM file found.',
     'CRA Annex I Part II (1)');
 
   add('package-repository', 'package.json links the source repository', 'recommended', Boolean(repositoryUrl(pkg.repository)),

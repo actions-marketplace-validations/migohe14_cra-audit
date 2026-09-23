@@ -45,6 +45,7 @@ function readSbom(file) {
   return {
     ok: true,
     manager: 'sbom',
+    purlBased: true,
     format: result.format,
     lockfileName: path.basename(file),
     sourceFile: file,

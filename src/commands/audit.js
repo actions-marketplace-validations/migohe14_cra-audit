@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('node:path');
-const { findProjectRoot } = require('../utils/fs');
+const { findAnyProjectRoot } = require('../core/project-source');
 const { logger } = require('../utils/logger');
 const { loadPolicy } = require('../core/policy');
 const { runAudit } = require('../core/auditor');
@@ -45,19 +45,23 @@ async function auditCommand(flags, only) {
 }
 
 /**
- * Project root: the nearest package.json, or with `-i <sbom>` the working
- * directory (any ecosystem, no package.json needed).
+ * Project root: with `-i <sbom>` the working directory; otherwise the nearest
+ * folder with a package.json or a supported manifest (requirements.txt,
+ * poetry.lock, uv.lock, Pipfile.lock, go.mod, pom.xml, gradle.lockfile).
  */
 function resolveRoot(flags) {
   const start = flags.cwd || process.cwd();
   if (inputPath(flags)) return path.resolve(start);
-  const root = findProjectRoot(start);
+  const root = findAnyProjectRoot(start);
   if (!root) {
-    logger.error('No package.json found. Run the command inside an npm project.');
+    logger.error(NO_PROJECT);
     return null;
   }
   return root;
 }
+
+const NO_PROJECT = 'No project found: expected a package.json (npm/Yarn/pnpm), requirements.txt, ' +
+  'poetry.lock, uv.lock, Pipfile.lock, go.mod, pom.xml or gradle.lockfile — or pass an SBOM with -i.';
 
 /** `-i/--input <sbom>` resolved against the working directory. */
 function inputPath(flags) {
@@ -78,4 +82,4 @@ function applyFlagOverrides(policy, flags) {
   return merged;
 }
 
-module.exports = { auditCommand, inputPath };
+module.exports = { auditCommand, inputPath, resolveRoot };

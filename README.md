@@ -5,7 +5,7 @@
 > Compliance audit for the **Cyber Resilience Act** (Regulation EU 2024/2847) and the **BSI TR-03183** technical guideline — native for npm, Yarn and pnpm, and for **any language** through its SBOM.
 
 `cra-audit` audits the installed dependencies of an npm project and checks the key requirements that the CRA imposes on "products with digital elements". It runs directly with `npx`, **without installation**, and has **no production dependencies** to minimize its own supply-chain surface.
-It reads the project lockfile natively, so it works with **npm** (`package-lock.json` / `npm-shrinkwrap.json`), **Yarn** (classic v1 and Berry v2+ `yarn.lock`) and **pnpm** (`pnpm-lock.yaml`) — auditing the exact versions each package manager pinned. For **Python, Java, Go, Rust, .NET, PHP, Ruby…** pass the SBOM produced by your usual tooling with `-i` ([details](#8-any-language-input-sbom--i)).
+It reads the project lockfile natively, so it works with **npm** (`package-lock.json` / `npm-shrinkwrap.json`), **Yarn** (classic v1 and Berry v2+ `yarn.lock`) and **pnpm** (`pnpm-lock.yaml`) — auditing the exact versions each package manager pinned. **Python, Go and Java** projects are read directly from `requirements.txt` / `poetry.lock` / `uv.lock` / `Pipfile.lock`, `go.mod`, `pom.xml` and `gradle.lockfile`, and **any other language** through the SBOM your tooling produces (`-i`) — [details](#8-other-languages-manifests-and-input-sbom).
 ```bash
 # Run ALL the law's checks (Vulnerabilities + Licenses + SBOM)
 npx cra-audit
@@ -151,7 +151,25 @@ npx cra-audit readiness --init   # creates SECURITY.md and .well-known/security.
 
 `--init` prefills the templates from `package.json` (GitHub private vulnerability reporting link, supported major version, a coordinated disclosure process and the Art. 14 24 h / 72 h / 14 days reporting commitments); fill in the `TODO` placeholders and run it again.
 
-### 8. Any language: input SBOM (`-i`)
+### 8. Other languages: manifests and input SBOM
+
+**Read directly — just run `npx cra-audit` in the project folder (no package.json needed):**
+
+| Ecosystem | Files | Notes |
+| --- | --- | --- |
+| Python | `poetry.lock`, `uv.lock`, `Pipfile.lock` (exact); otherwise `requirements*.txt` | Only `==` pins are audited; ranges are skipped and reported, never guessed. `-r` includes, extras, markers and `--hash` lines are handled. |
+| Go | `go.mod` | Every required module (direct and `// indirect`), with `replace` directives applied. |
+| Java | `gradle.lockfile` (exact), `pom.xml` | `pom.xml`: declared dependencies with `${property}` and `<dependencyManagement>` resolution; transitive ones need a Maven-generated SBOM. |
+
+Findings point at the exact line of the manifest (in the console and in SARIF). A folder with both an npm lockfile and one of these manifests (e.g. a front end next to a Go API) is audited as a whole. Manifests do not carry licenses or hashes, so for these ecosystems the audit **warns** instead of generating a TR-03183 SBOM: commit the one your build produces and audit it with `-i`.
+
+```text
+  Sources: OSV.dev … · 4 components from requirements.txt, go.mod, pom.xml (golang, maven, pypi)
+  pom.xml: declared dependencies only; commit a Maven-generated SBOM (cyclonedx-maven-plugin) to audit transitive ones
+  CRITICAL [KEV] org.apache.logging.log4j:log4j-core@2.14.1  (fix: org.apache.logging.log4j:log4j-core@2.25.4)
+```
+
+**Input SBOM (`-i`), any language:**
 
 `audit`, `vuln`, `licenses` and `vex` accept an existing **CycloneDX JSON**, **SPDX 2.x JSON** or **SPDX 3.0 JSON-LD** SBOM instead of the npm lockfile. Every component is looked up in OSV.dev by its **Package URL**, so you get the same checks — known vulnerabilities, **malicious packages**, **CISA KEV** with the Art. 14 clock, licenses, VEX and SARIF — for any ecosystem OSV covers (Maven, PyPI, Go, crates.io, NuGet, Packagist, RubyGems, Hex, Pub, npm…).
 
@@ -346,7 +364,7 @@ Suitable for CI/CD: a non-`0` code blocks the pipeline.
 
 Available in the GitHub Marketplace as [CRA Compliance Audit](https://github.com/marketplace/actions/cra-compliance-audit).
 
-For a Python, Java, Go… project, generate the SBOM first and pass it with `sbom-input`:
+Python, Go and Java projects work as they are (the action reads `requirements.txt`, `go.mod`, `pom.xml`…). For other languages, or to include Maven's transitive dependencies, generate the SBOM first and pass it with `sbom-input`:
 
 ```yaml
       - uses: anchore/sbom-action@v0          # Syft

@@ -185,7 +185,7 @@ test('queries OSV by purl and resolves fixes with each ecosystem naming', async 
   assert.ok(queries.every((q) => q.package.purl && !q.version && !q.package.ecosystem));
   assert.equal(result.scanned, 4);
   assert.deepEqual(result.ecosystems, ['golang', 'maven', 'pypi']);
-  assert.deepEqual(result.input, { file: parsed.sourceFile, format: 'cyclonedx', unidentified: 1 });
+  assert.deepEqual(result.input, { file: parsed.sourceFile, format: 'cyclonedx', unidentified: 1, notes: [] });
 
   const log4j = result.vulnerabilities.find((v) => v.ecosystem === 'maven');
   assert.equal(log4j.kev, true);
@@ -204,7 +204,7 @@ test('npm audit cannot scan an input SBOM', async () => {
   const parsed = readSbom(write(tmp(), 'bom.json', CDX));
   const result = await scanVulnerabilities(tmp(), { parsed, source: 'npm' });
   assert.equal(result.ok, false);
-  assert.match(result.error, /cannot scan an input SBOM/);
+  assert.match(result.error, /only scans npm projects/);
 });
 
 test('audits an input SBOM without a package.json', async () => {

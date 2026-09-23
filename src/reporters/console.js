@@ -38,6 +38,7 @@ function renderVulnerabilities(section) {
   }
   logger.detail(describeSources(section));
   for (const warning of section.warnings || []) logger.warn(warning);
+  for (const note of (section.input && section.input.notes) || []) logger.detail(note);
 
   const c = section.counts;
   if (c.total === 0) {
@@ -89,9 +90,9 @@ function describeSources(section) {
     ? `CISA KEV ${section.kev.catalogVersion || ''} (${section.kev.entries} entries)`.replace('  ', ' ')
     : `CISA KEV not checked (${(section.kev && section.kev.error) || 'unavailable'})`;
   const scope = section.input
-    ? `${section.scanned} components from ${shortPath(section.input.file)} (${(section.ecosystems || []).join(', ')})` +
-      (section.input.unidentified ? ` · ${section.input.unidentified} without purl skipped` : '')
-    : `${section.scanned} components`;
+    ? `${section.scanned} components from ${section.input.format === 'manifest' ? section.input.file : shortPath(section.input.file)} (${(section.ecosystems || []).join(', ')})` +
+      (section.input.unidentified ? ` · ${section.input.unidentified} ${section.input.format === 'manifest' ? 'not pinned, skipped' : 'without purl skipped'}` : '')
+    : `${section.scanned} components${(section.ecosystems || []).length > 1 ? ` (${section.ecosystems.join(', ')})` : ''}`;
   return `Sources: OSV.dev (GitHub advisories + OpenSSF malicious packages) · ${kev} · ${scope}`;
 }
 
@@ -119,6 +120,12 @@ function renderSbom(section) {
   logger.heading('2) Software Bill of Materials · SBOM (CRA Annex I)');
   if (!section.ok) {
     logger.error(section.error);
+    return;
+  }
+  if (section.manifest) {
+    logger.detail(`Components read from ${section.files.join(', ')} (${section.ecosystems.join(', ')}): ${section.componentCount}`);
+    logger.warn('cra-audit builds TR-03183 SBOMs from npm lockfiles. For these ecosystems, commit the SBOM your');
+    logger.detail('build tooling produces (Syft, cdxgen, cyclonedx-maven-plugin, cyclonedx-py…) and audit it with -i.');
     return;
   }
   logger.detail(`${section.input ? `Input SBOM: ${shortPath(section.input)} · ` : ''}Format: ${section.format} · Components: ${section.componentCount}`);

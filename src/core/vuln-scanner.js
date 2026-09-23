@@ -25,19 +25,19 @@ const SEVERITY_ORDER = ['info', 'low', 'moderate', 'high', 'critical'];
  *    CVEs found are cross-checked with the CISA KEV catalogue.
  *  - `npm`: `npm audit`. Also the fallback when OSV.dev is unreachable.
  *
- * An existing SBOM of any ecosystem can be scanned instead of the lockfile by
- * passing the result of readSbom() as `parsed`; its components are looked up
- * in OSV.dev by Package URL.
+ * Other ecosystems are scanned by passing, as `parsed`, the result of
+ * readSbom() (an input SBOM) or readManifests() (requirements.txt, go.mod,
+ * pom.xml…); their components are looked up in OSV.dev by Package URL.
  *
  * @param {string} projectRoot
  * @param {{ production?: boolean, source?: 'osv'|'npm', kev?: boolean, parsed?: object }} [options]
  * @returns {Promise<object>}
  */
 async function scanVulnerabilities(projectRoot, { production = false, source = 'osv', kev = true, parsed: given } = {}) {
-  const fromSbom = Boolean(given && given.manager === 'sbom');
+  const fromSbom = Boolean(given && given.purlBased);
   if (source === 'npm') {
     if (fromSbom) {
-      return { ok: false, error: '`npm audit` cannot scan an input SBOM; use the default OSV source.', counts: emptyCounts(), vulnerabilities: [] };
+      return { ok: false, error: '`npm audit` only scans npm projects; use the default OSV source.', counts: emptyCounts(), vulnerabilities: [] };
     }
     return npmAuditSection(projectRoot, { production });
   }
@@ -88,7 +88,9 @@ async function scanVulnerabilities(projectRoot, { production = false, source = '
     ok: true,
     source: 'osv',
     scanned: scannable.length,
-    input: fromSbom ? { file: parsed.sourceFile, format: parsed.format, unidentified: parsed.unidentified } : null,
+    input: fromSbom
+      ? { file: parsed.sourceFile || parsed.lockfileName, format: parsed.format, unidentified: parsed.unidentified, notes: parsed.notes || [] }
+      : null,
     ecosystems: [...new Set(scannable.map((c) => c.ecosystem || 'npm'))].sort(),
     kev: catalogue
       ? (catalogue.ok
@@ -135,6 +137,7 @@ function toFinding(component, records, isDirect, catalogue) {
     version: component.version,
     purl: component.purl || buildPurl(component.name, component.version),
     ecosystem: component.ecosystem || 'npm',
+    location: component.location || null,
     severity,
     direct: isDirect,
     range: null,
@@ -169,7 +172,8 @@ function productionComponents(parsed, rootPkg) {
       if (!seen.has(dep)) { seen.add(dep); queue.push(dep); }
     }
   }
-  return parsed.components.filter((c) => seen.has(componentKey(c.name, c.version)));
+  // Components of other ecosystems (npm+manifest projects) use their own scope.
+  return parsed.components.filter((c) => (c.ecosystem ? !c.optional : seen.has(componentKey(c.name, c.version))));
 }
 
 function severityRank(severity) {

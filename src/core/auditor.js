@@ -5,7 +5,7 @@ const { generateSbom } = require('./sbom-generator');
 const { validateSbom } = require('./sbom-validator');
 const { checkLicenses } = require('./license-checker');
 const { acceptance } = require('./vex');
-const { readSbom } = require('./sbom-reader');
+const { loadProject } = require('./project-source');
 
 /**
  * @typedef {object} AuditResult
@@ -19,12 +19,13 @@ const { readSbom } = require('./sbom-reader');
  * Runs the full CRA audit: vulnerabilities + SBOM + licenses, then evaluates
  * the result against the configured security policy.
  *
+ * The components come from the npm lockfile, an input SBOM (`input`, any
+ * ecosystem) or, without an npm lockfile, the manifests of other ecosystems
+ * (requirements.txt, poetry.lock, go.mod, pom.xml…). See ./project-source.js.
+ *
  * @param {string} projectRoot
  * @param {object} policy
  * @param {string|null} policySource
- * With `input` (path to a CycloneDX/SPDX JSON SBOM) the audit runs on that
- * SBOM instead of the npm lockfile, so it covers any ecosystem.
- *
  * @param {{ only?: 'vulnerabilities'|'sbom'|'licenses', input?: string }} [options]
  * @returns {Promise<AuditResult>}
  */
@@ -32,7 +33,9 @@ async function runAudit(projectRoot, policy, policySource, options = {}) {
   const { only, input } = options;
   const sections = {};
   const reasons = [];
-  const parsed = input ? readSbom(input) : null;
+  const project = loadProject(projectRoot, { input });
+  const parsed = project.parsed;
+  const fromManifests = project.mode === 'manifest';
 
   // --- 1. Vulnerabilities -------------------------------------------------
   if (!only || only === 'vulnerabilities') {
@@ -62,7 +65,21 @@ async function runAudit(projectRoot, policy, policySource, options = {}) {
   }
 
   // --- 2. SBOM ------------------------------------------------------------
-  if ((!only || only === 'sbom') && parsed) {
+  if ((!only || only === 'sbom') && fromManifests) {
+    // TR-03183 SBOMs (hashes, creators, graph) are built from npm lockfiles;
+    // other ecosystems should commit the one their build tooling produces.
+    sections.sbom = {
+      ok: true, manifest: true, format: 'manifest', componentCount: parsed.components.length,
+      files: parsed.files, ecosystems: parsed.ecosystems,
+    };
+    if (policy.requireSbom) {
+      reasons.push({
+        label: `No SBOM generated for ${parsed.ecosystems.join(', ')}: commit one from your build tooling (Syft, cdxgen, CycloneDX plugins) and audit it with \`-i\``,
+        passed: true,
+        warning: true,
+      });
+    }
+  } else if ((!only || only === 'sbom') && project.mode === 'sbom') {
     // An input SBOM comes from third-party tooling that rarely carries the
     // manufacturer fields TR-03183 requires: report gaps without blocking.
     const sbom = parsed.ok
@@ -103,11 +120,18 @@ async function runAudit(projectRoot, policy, policySource, options = {}) {
 
   // --- 3. Licenses --------------------------------------------------------
   if (!only || only === 'licenses') {
-    const licenses = checkLicenses(projectRoot, policy.licenses, { parsed });
+    const licenses = checkLicenses(projectRoot, policy.licenses, { parsed: project.mode === 'npm+manifest' ? null : parsed });
     sections.licenses = licenses;
 
     if (!licenses.ok) {
       reasons.push({ label: `Licenses could not be analyzed: ${licenses.error}`, passed: false });
+    } else if (fromManifests) {
+      // Manifests do not declare licenses: report the gap instead of failing.
+      reasons.push({
+        label: `Licenses are not declared in ${parsed.files.join(', ')}: ${licenses.summary.missing.length} component(s) to review in your SBOM`,
+        passed: true,
+        warning: licenses.summary.missing.length > 0,
+      });
     } else {
       const s = licenses.summary;
       const missingFails = policy.licenses.failOnMissing && s.missing.length > 0;
@@ -122,8 +146,8 @@ async function runAudit(projectRoot, policy, policySource, options = {}) {
   }
 
   return {
-    project: parsed && parsed.ok
-      ? { name: parsed.root.name, version: parsed.root.version, sbom: parsed.sourceFile }
+    project: parsed && parsed.ok && project.mode !== 'npm+manifest'
+      ? { name: parsed.root.name, version: parsed.root.version, ...(project.mode === 'sbom' ? { sbom: parsed.sourceFile } : { manifests: parsed.files }) }
       : getProject(projectRoot, sections),
     policySource,
     generatedAt: new Date().toISOString(),

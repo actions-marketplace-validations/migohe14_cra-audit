@@ -1,11 +1,13 @@
 'use strict';
 
 const path = require('node:path');
-const { findProjectRoot, readJson, writeJson, exists } = require('../utils/fs');
+const { readJson, writeJson, exists } = require('../utils/fs');
 const { logger, color } = require('../utils/logger');
 const { generateSbom } = require('../core/sbom-generator');
 const { validateSbom } = require('../core/sbom-validator');
 const { loadPolicy } = require('../core/policy');
+const { hasManifests } = require('../core/manifest-reader');
+const { findAnyProjectRoot } = require('../core/project-source');
 
 /**
  * `cra-audit sbom <generate|check>` and the `--sbom` shortcut.
@@ -15,9 +17,18 @@ const { loadPolicy } = require('../core/policy');
  *             required by BSI TR-03183-2 v2.1.0 §5.2.
  */
 function sbomCommand(subcommand, flags) {
-  const projectRoot = findProjectRoot(flags.cwd || process.cwd());
+  const start = flags.cwd || process.cwd();
+  // The nearest project decides: a Python/Go/Java folder inside an npm repo is not npm.
+  const nearest = findAnyProjectRoot(start);
+  const npmProject = nearest && exists(path.join(nearest, 'package.json'));
+  const projectRoot = npmProject ? nearest : (flags.input ? path.resolve(start) : null);
   if (!projectRoot) {
-    logger.error('No package.json found. Run the command inside an npm project.');
+    const other = nearest && hasManifests(nearest);
+    logger.error(other
+      ? 'cra-audit generates TR-03183 SBOMs for npm/Yarn/pnpm projects. For this ecosystem, generate the SBOM with ' +
+        'your build tooling (Syft, cdxgen, cyclonedx-maven-plugin, cyclonedx-py…) and check it with `cra-audit sbom check -i <file>`; ' +
+        '`cra-audit` audits this project directly.'
+      : 'No package.json found. Run the command inside an npm project, or pass an SBOM with `sbom check -i <file>`.');
     return 1;
   }
 

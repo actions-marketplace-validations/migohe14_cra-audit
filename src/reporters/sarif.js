@@ -30,7 +30,8 @@ function buildSarif(report, projectRoot, policy = {}) {
   const rules = new Map();
   const results = [];
   const vulns = report.sections.vulnerabilities;
-  const inputFile = vulns && vulns.input ? vulns.input.file : null;
+  // An input SBOM is searched for purls; manifest findings carry their own location.
+  const inputFile = vulns && vulns.input && vulns.input.format !== 'manifest' ? vulns.input.file : null;
   const lock = lockfileLocator(projectRoot, inputFile);
   const assessments = normalizeAllowlist(policy);
 
@@ -47,7 +48,7 @@ function buildSarif(report, projectRoot, policy = {}) {
             : finding.malicious || source.kev || ['critical', 'high'].includes(source.severity || finding.severity) ? 'error'
               : (source.severity || finding.severity) === 'moderate' ? 'warning' : 'note',
           message: { text: vulnerabilityMessage(finding, source) },
-          locations: [lock.locate(finding.name, finding.version, finding.purl)],
+          locations: [finding.location ? lock.at(finding.location) : lock.locate(finding.name, finding.version, finding.purl)],
           partialFingerprints: { 'craAudit/v1': `${ruleId}:${finding.name}@${finding.version || ''}` },
         };
         if (accepted) {
@@ -71,14 +72,17 @@ function buildSarif(report, projectRoot, policy = {}) {
       ['cra-audit/license-missing', s.missing, 'warning', (c) => `${c.name}@${c.version} has no documented license (TR-03183-2 §5.2.2).`],
     ];
     for (const [ruleId, list, level, text] of groups) {
-      if (!list.length) continue;
+      // Manifests (requirements.txt, go.mod…) never declare licenses: that gap is
+      // reported once by the audit, not as one alert per dependency.
+      const relevant = ruleId === 'cra-audit/license-missing' ? list.filter((c) => !c.location) : list;
+      if (!relevant.length) continue;
       rules.set(ruleId, licenseRule(ruleId));
-      for (const c of list) {
+      for (const c of relevant) {
         results.push({
           ruleId,
           level,
           message: { text: text(c) },
-          locations: [lock.locate(c.name, c.version, c.purl)],
+          locations: [c.location ? lock.at(c.location) : lock.locate(c.name, c.version, c.purl)],
           partialFingerprints: { 'craAudit/v1': `${ruleId}:${c.name}@${c.version}` },
         });
       }
@@ -193,7 +197,14 @@ function lockfileLocator(projectRoot, inputFile = null) {
       },
     };
   };
-  return { repoRoot, locate };
+  // A known file + line (components read from manifests).
+  const at = ({ file: rel, line }) => ({
+    physicalLocation: {
+      artifactLocation: { uri: path.relative(repoRoot, path.resolve(projectRoot, rel)).split(path.sep).join('/'), uriBaseId: '%SRCROOT%' },
+      region: { startLine: line || 1 },
+    },
+  });
+  return { repoRoot, locate, at };
 }
 
 function findEntryLine(lines, name, version) {

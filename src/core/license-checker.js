@@ -32,6 +32,7 @@ function checkLicenses(projectRoot, policy = {}, { parsed: given } = {}) {
       name: c.name,
       version: c.version,
       purl: c.purl || null,
+      location: c.location || null,
       license: normalized,
       status, // 'ok' | 'missing' | 'denied' | 'not-allowed'
     };
