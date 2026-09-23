@@ -8,6 +8,10 @@ Releases are automated: pushing a `vX.Y.Z` tag publishes the package to npm
 (with provenance) and creates the GitHub Release from the matching section
 below, so add the section before running `npm version`.
 
+## [2.1.1] — GitHub Marketplace
+
+- The GitHub Action is published in the Marketplace as **CRA Compliance Audit** (the name "CRA Audit" is taken by a GitHub organization). Usage is unchanged: `uses: migohe14/cra-audit@v2`.
+
 ## [2.1.0] — VEX, SARIF & GitHub Action, CRA readiness
 
 ### Highlights

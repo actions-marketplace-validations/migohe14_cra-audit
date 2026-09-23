@@ -1,5 +1,5 @@
-name: 'CRA Audit'
-description: 'EU Cyber Resilience Act audit for npm/Yarn/pnpm: OSV + CISA KEV + malicious packages, TR-03183 SBOM, VEX and SARIF for code scanning.'
+name: 'CRA Compliance Audit'
+description: 'EU Cyber Resilience Act audit for npm, Yarn and pnpm: OSV, CISA KEV, malicious packages, TR-03183 SBOM, VEX, SARIF.'
 author: 'Miguel Gonzalez'
 branding:
   icon: 'shield'

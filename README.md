@@ -313,6 +313,8 @@ Suitable for CI/CD: a non-`0` code blocks the pipeline.
 
 ## GitHub Action
 
+Available in the GitHub Marketplace as [CRA Compliance Audit](https://github.com/marketplace/actions/cra-compliance-audit).
+
 ```yaml
 name: CRA audit
 on: [push, pull_request]
