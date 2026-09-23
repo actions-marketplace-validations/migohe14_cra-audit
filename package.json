@@ -1,6 +1,6 @@
 {
   "name": "cra-audit",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Audits npm, yarn, and pnpm projects for compliance with the European Cyber Resilience Act (CRA, EU Regulation 2024/2847) and BSI TR-03183: SBOM (CycloneDX/SPDX), known vulnerabilities, third-party components, and licenses.",
   "homepage": "https://github.com/migohe14/cra-audit#readme",
   "repository": {
