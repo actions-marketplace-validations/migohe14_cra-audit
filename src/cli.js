@@ -167,6 +167,8 @@ function setFlag(flags, name, value) {
     case '--no-fail-on-kev': flags.noFailOnKev = value; break;
     case '--sarif': flags.sarif = value; break;
     case '--init': flags.init = value; break;
+    case '--country': flags.country = value; break;
+    case '--lang': flags.lang = String(value).toLowerCase(); break;
     case '--verbose': flags.verbose = value; break;
     default:
       // Unknown flag stored under its raw name for forward compatibility.
@@ -206,6 +208,8 @@ ${c.bold('OPTIONS')}
   ${c.cyan('--fail-on <sev>')}       Minimum severity that fails the audit: info|low|moderate|high|critical.
   ${c.cyan('--vuln-source <src>')}   Vulnerability source: osv (default: OSV.dev + CISA KEV) | npm (npm audit).
   ${c.cyan('--no-fail-on-kev')}      Report actively exploited (CISA KEV) vulnerabilities without failing.
+  ${c.cyan('--country <cc>')}        Country of your main establishment (e.g. ES): shows its CSIRT's Art. 14 steps.
+  ${c.cyan('--lang <en|es>')}        Language of the readiness --init templates (default: en).
   ${c.cyan('--production, --prod')}  Audit production dependencies only (skips devDependencies).
   ${c.cyan('--no-sbom')}             Do not require an SBOM in the full audit.
   ${c.cyan('--json')}                Machine-readable JSON output.

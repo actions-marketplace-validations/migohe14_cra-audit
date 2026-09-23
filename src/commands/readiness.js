@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { logger, color } = require('../utils/logger');
 const { checkReadiness, writeTemplates } = require('../core/readiness');
+const { loadPolicy } = require('../core/policy');
 
 /**
  * `cra-audit readiness [--init]` — checks the organisational CRA duties that
@@ -15,15 +16,17 @@ const { checkReadiness, writeTemplates } = require('../core/readiness');
  */
 function readinessCommand(flags) {
   const projectRoot = findRepositoryRoot(flags.cwd || process.cwd());
+  const country = typeof flags.country === 'string' ? flags.country.toUpperCase() : policyCountry(projectRoot, flags);
+  const lang = flags.lang === 'es' ? 'es' : 'en';
 
   if (flags.init) {
-    for (const { file, created } of writeTemplates(projectRoot)) {
+    for (const { file, created } of writeTemplates(projectRoot, { lang, country })) {
       if (created) logger.success(`Created ${file} — fill in the TODO placeholders.`);
       else logger.info(`${file} already exists; left untouched.`);
     }
   }
 
-  const result = checkReadiness(projectRoot);
+  const result = checkReadiness(projectRoot, { country });
 
   if (flags.json) {
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
@@ -64,6 +67,15 @@ function findRepositoryRoot(start) {
     const parent = path.dirname(dir);
     if (parent === dir) return path.resolve(start);
     dir = parent;
+  }
+}
+
+/** `country` from .cra-audit.json, if any (a broken policy never blocks readiness). */
+function policyCountry(projectRoot, flags) {
+  try {
+    return loadPolicy(projectRoot, flags.config).policy.country || null;
+  } catch {
+    return null;
   }
 }
 

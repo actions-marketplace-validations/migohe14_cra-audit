@@ -79,6 +79,7 @@ function applyFlagOverrides(policy, flags) {
   if (flags.vulnSource) merged.vulnerabilitySource = flags.vulnSource;
   if (flags.failOnKev) merged.failOnKev = true;
   if (flags.noFailOnKev) merged.failOnKev = false;
+  if (typeof flags.country === 'string') merged.country = flags.country.toUpperCase();
   return merged;
 }
 

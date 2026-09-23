@@ -23,14 +23,14 @@ function reportConsole(report) {
     logger.detail(`Policy: ${report.policySource}`);
   }
 
-  if (report.sections.vulnerabilities) renderVulnerabilities(report.sections.vulnerabilities);
+  if (report.sections.vulnerabilities) renderVulnerabilities(report.sections.vulnerabilities, report.reporting);
   if (report.sections.sbom) renderSbom(report.sections.sbom);
   if (report.sections.licenses) renderLicenses(report.sections.licenses);
 
   renderSummary(report);
 }
 
-function renderVulnerabilities(section) {
+function renderVulnerabilities(section, reporting) {
   logger.heading('1) Known vulnerabilities (CRA Annex I · Art. 14)');
   if (!section.ok) {
     logger.error(section.error);
@@ -75,7 +75,7 @@ function renderVulnerabilities(section) {
     logger.detail(`… and ${ordered.length - top.length} more.`);
   }
 
-  if (c.kev) renderArticle14Notice();
+  if (c.kev) renderArticle14Notice(reporting);
   if (c.malicious) {
     logger.log('');
     logger.error(color.bold('Malicious package(s) detected: treat this as a security incident.'));
@@ -97,15 +97,26 @@ function describeSources(section) {
 }
 
 /** CRA Art. 14 reporting clock, shown when a KEV-listed vulnerability is found. */
-function renderArticle14Notice() {
+function renderArticle14Notice(reporting) {
+  const local = reporting && reporting.local;
   logger.log('');
   logger.warn(color.bold('CRA Art. 14 — actively exploited vulnerability in a dependency'));
   logger.detail('If it affects a product with digital elements you place on the EU market, notify');
-  logger.detail('the coordinating CSIRT and ENISA through the Single Reporting Platform:');
+  logger.detail(`${local ? `${local.csirt} and ENISA` : 'the coordinating CSIRT and ENISA'} through the Single Reporting Platform (SRP):`);
   logger.detail('  • Early warning ........ within 24 hours of becoming aware');
   logger.detail('  • Notification ......... within 72 hours');
   logger.detail('  • Final report ......... within 14 days after a corrective measure is available');
   logger.detail('Assess exploitability in your product first; document the decision either way.');
+  if (local) {
+    logger.log('');
+    logger.detail(color.bold(`${local.csirt} (${local.country}) — access to the SRP:`));
+    local.srpAccess.steps.forEach((step, i) => logger.detail(`  ${i + 1}. ${step}`));
+    logger.detail(`  ${local.srpAccess.advice}`);
+    logger.detail(`  ${local.whenInDoubt}`);
+    logger.detail(`  Source: ${local.source}`);
+  } else {
+    logger.detail(`SRP: ${reporting ? reporting.srp.url : 'https://portal.cra-srp.enisa.europa.eu'} · Set your country (--country, e.g. ES) for its CSIRT's steps.`);
+  }
 }
 
 function describeFix(fix) {

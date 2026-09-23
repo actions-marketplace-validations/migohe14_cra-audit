@@ -200,6 +200,21 @@ Notes:
 - The input SBOM is also checked against TR-03183-2; since third-party generators rarely include the manufacturer fields, gaps are reported as a **warning** in the audit (`cra-audit sbom check -i` shows the details and fails on them). For npm projects, `cra-audit sbom generate` produces a conforming SBOM.
 - SARIF alerts point at the line of the component's purl in the SBOM file.
 
+### 9. Where to report: your country's CSIRT (`--country`)
+
+CRA Art. 14 notifications go through ENISA's Single Reporting Platform to the CSIRT of your main establishment's Member State. Set it once (`"country": "ES"` in `.cra-audit.json`, `--country ES`, or the action's `country` input) and the Art. 14 notice, the JSON report (`reporting`) and `readiness` include that CSIRT's procedure.
+
+**Spain — INCIBE-CERT** (verified against [INCIBE-CERT's CRA guidance](https://www.incibe.es/incibe-cert/blog/reglamento-de-ciberresiliencia-cra-que-es-quien-afecta-y-como-prepararse), 2026-09-09):
+
+- SRP access is requested from INCIBE at **cve-coordination@incibe.es**, which validates the manufacturer before registration — request it before you need it.
+- Incidents outside the CRA: **incidencias@incibe-cert.es**. Undisclosed vulnerabilities needing a CVE: INCIBE's CNA (**cve-coordination@incibe.es**).
+- In doubt, report through INCIBE-CERT's usual channels; INCIBE tells you whether to file it in the SRP.
+- `npx cra-audit readiness --init --lang es --country ES` writes a Spanish `SECURITY.md` with this procedure.
+
+🇪🇸 Guía en español: [Notificar al INCIBE-CERT según el CRA](docs/es/notificar-incibe.md).
+
+Other countries get the generic EU procedure for now; contributions with verified CSIRT procedures are welcome.
+
 ---
 
 ## Usage
@@ -265,6 +280,8 @@ cra-audit --help
 | `--fail-on <sev>` | Minimum severity that fails the audit: `info`, `low`, `moderate`, `high`, `critical`. |
 | `--vuln-source <src>` | `osv` (default: OSV.dev + CISA KEV) or `npm` (`npm audit`). |
 | `--no-fail-on-kev` | Report actively exploited (CISA KEV) vulnerabilities as a warning instead of failing. |
+| `--country <cc>` | Country of your main establishment (e.g. `ES`): the Art. 14 notice and `readiness` include its CSIRT's procedure. |
+| `--lang <en|es>` | Language of the `readiness --init` templates. |
 | `--production`, `--prod` | Audit production dependencies only. |
 | `--no-sbom` | Do not require an SBOM in the full audit. |
 | `--json` | Machine-readable JSON output. |
@@ -320,6 +337,7 @@ Create a `.cra-audit.json` file at the project root to customize the rules (ther
 {
   "failOn": "high",
   "failOnKev": true,
+  "country": "ES",
   "vulnerabilitySource": "osv",
   "requireSbom": true,
   "sbomFormat": "cyclonedx",
@@ -337,6 +355,7 @@ Create a `.cra-audit.json` file at the project root to customize the rules (ther
 ```
 
 - `failOn`: minimum severity that blocks the audit.
+- `country`: ISO code of your main establishment (e.g. `ES`); decides the CSIRT in the Art. 14 guidance.
 - `failOnKev`: fail when a dependency has an actively exploited vulnerability (CISA KEV). Default `true`.
 - `vulnerabilitySource`: `osv` (OSV.dev + CISA KEV) or `npm` (`npm audit`).
 - `requireSbom`: require the SBOM to meet the TR-03183-2 required data fields.
@@ -414,6 +433,7 @@ Every finding shows up in **Security → Code scanning**, pointing at the exact 
 | `fail-on` | `high` | Minimum severity that fails the job. |
 | `fail-on-kev` | `true` | Fail on actively exploited (CISA KEV) vulnerabilities. |
 | `production` | `false` | Production dependencies only. |
+| `country` | — | Country of your main establishment (e.g. `ES`) for the Art. 14 CSIRT steps. |
 | `sarif` | `cra-audit.sarif` | SARIF path (empty to skip). |
 | `upload-sarif` | `true` | Upload to code scanning (needs `security-events: write`; private repos need GitHub Advanced Security). |
 | `sbom` / `vex` | — | Also write the SBOM / VEX to these paths. |

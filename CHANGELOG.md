@@ -8,6 +8,19 @@ Releases are automated: pushing a `vX.Y.Z` tag publishes the package to npm
 (with provenance) and creates the GitHub Release from the matching section
 below, so add the section before running `npm version`.
 
+## [2.4.0] — Report to your country's CSIRT (INCIBE-CERT for Spain)
+
+### Highlights
+
+- **`--country`** (policy `country`, action input `country`): the country of your main establishment decides where CRA Art. 14 notifications go. For **Spain**, the Art. 14 notice now shows INCIBE-CERT's procedure, verified against [INCIBE-CERT's CRA guidance](https://www.incibe.es/incibe-cert/blog/reglamento-de-ciberresiliencia-cra-que-es-quien-afecta-y-como-prepararse): SRP access requested from INCIBE (cve-coordination@incibe.es) with prior validation, incidents outside the CRA to incidencias@incibe-cert.es, and INCIBE's usual channels when in doubt.
+- The JSON report carries a **`reporting`** block (CSIRT, SRP, deadlines, steps) for automation.
+- **`readiness --init --lang es`** writes Spanish `SECURITY.md` and `security.txt` templates; with `--country ES` they include the INCIBE-CERT section, and `readiness` checks that the coordinating CSIRT is named. The checks understand Spanish wording.
+- 🇪🇸 New guide in Spanish: [docs/es/notificar-incibe.md](docs/es/notificar-incibe.md).
+
+### Fixes
+
+- `require('cra-audit/package.json')` works again: the manifest is exported alongside the API, so tools that read dependency versions this way no longer fail with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
+
 ## [2.3.0] — Python, Go and Java without an SBOM tool
 
 ### Highlights

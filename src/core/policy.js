@@ -23,6 +23,9 @@ const DEFAULT_POLICY = {
   // Fail when a dependency has an actively exploited vulnerability (CISA KEV),
   // the trigger of the CRA Art. 14 reporting obligation.
   failOnKev: true,
+  // ISO 3166-1 alpha-2 country of the manufacturer's main establishment: it
+  // decides the CSIRT that receives CRA Art. 14 notifications (e.g. "ES").
+  country: null,
   // Audit only production dependencies (recommended for shipped products).
   productionOnly: false,
   vulnerabilities: {

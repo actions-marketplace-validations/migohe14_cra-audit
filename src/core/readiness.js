@@ -6,6 +6,7 @@ const { readJson } = require('../utils/fs');
 const { parseLockfile } = require('./lockfile-parser');
 const { repositoryUrl } = require('./installed-metadata');
 const { readManifests } = require('./manifest-reader');
+const { reportingGuide } = require('./reporting');
 
 /**
  * Organisational CRA duties that can be checked from the repository itself:
@@ -30,10 +31,11 @@ const URL = /https?:\/\/\S+/;
 
 /**
  * @param {string} projectRoot
- * @param {{ now?: Date }} [options]
+ * @param {{ now?: Date, country?: string|null }} [options]
+ *   `country`: main establishment (ISO alpha-2); adds its CSIRT's checks.
  * @returns {{ checks: Array<object>, passed: boolean, files: object }}
  */
-function checkReadiness(projectRoot, { now = new Date() } = {}) {
+function checkReadiness(projectRoot, { now = new Date(), country = null } = {}) {
   const checks = [];
   const add = (id, label, level, passed, detail, reference) => checks.push({ id, label, level, passed: Boolean(passed), detail, reference });
 
@@ -54,8 +56,9 @@ function checkReadiness(projectRoot, { now = new Date() } = {}) {
 
   // --- Support period ---------------------------------------------------------
   const supportText = `${securityMd}\n${readme}`;
-  const supportMention = /support(ed)?\s+period|supported\s+until|end\s+of\s+(security\s+)?support|end[-\s]of[-\s]life|\bEOL\b/i.test(supportText);
-  const supportDate = supportMention && /\b(19|20)\d{2}-\d{2}(-\d{2})?\b|\b\d+\s+years?\b/i.test(supportText);
+  // English and Spanish wording ("periodo de soporte", "fin del soporte"…).
+  const supportMention = /support(ed)?\s+period|supported\s+until|end\s+of\s+(security\s+)?support|end[-\s]of[-\s]life|\bEOL\b|periodo\s+de\s+soporte|soporte\s+(de\s+seguridad\s+)?hasta|fin\s+del\s+soporte|fin\s+de\s+vida/i.test(supportText);
+  const supportDate = supportMention && /\b(19|20)\d{2}-\d{2}(-\d{2})?\b|\b\d+\s+(years?|años?)\b/i.test(supportText);
   add('support-period', 'Support period and its end date stated', 'required', supportMention && supportDate,
     !supportMention ? 'No mention of the support period in SECURITY.md or README.md'
       : supportDate ? 'Support period with an end date or duration found' : 'Support period mentioned without an end date',
@@ -63,13 +66,22 @@ function checkReadiness(projectRoot, { now = new Date() } = {}) {
 
   // --- Recommended content ------------------------------------------------------
   add('supported-versions', 'Supported versions listed', 'recommended',
-    /supported\s+versions/i.test(securityMd), 'A "Supported Versions" section in SECURITY.md', 'CRA Annex II (7)');
+    /supported\s+versions|versiones\s+(con\s+soporte|soportadas)/i.test(securityMd), 'A "Supported Versions" section in SECURITY.md', 'CRA Annex II (7)');
   add('response-timeline', 'Response timeline for reporters', 'recommended',
-    /\b\d+\s*(business\s+)?(hours?|days?|weeks?)\b/i.test(securityMd), 'Acknowledgement / fix time frames in SECURITY.md',
+    /\b\d+\s*(business\s+)?(hours?|days?|weeks?|horas?|d[ií]as?|semanas?)\b/i.test(securityMd), 'Acknowledgement / fix time frames in SECURITY.md',
     'CRA Annex I Part II (5)');
   add('art14-process', 'Art. 14 reporting process (CSIRT / ENISA, 24 h / 72 h)', 'recommended',
-    /ENISA|CSIRT|single\s+reporting\s+platform|24\s*h(ours)?/i.test(securityMd),
+    /ENISA|CSIRT|single\s+reporting\s+platform|24\s*h(ours|oras)?/i.test(securityMd),
     'How actively exploited vulnerabilities and severe incidents are reported', 'CRA Art. 14');
+
+  // The coordinating CSIRT of the manufacturer's country (Art. 14(7)).
+  const local = reportingGuide(country).local;
+  if (local) {
+    add('coordinating-csirt', `Coordinating CSIRT named (${local.csirt})`, 'recommended',
+      new RegExp(local.csirt.split('-')[0], 'i').test(securityMd),
+      `SECURITY.md should say Art. 14 notifications go to ${local.csirt} via the ENISA SRP (access: ${local.srpAccess.contact})`,
+      'CRA Art. 14(7)');
+  }
 
   // --- security.txt (RFC 9116) --------------------------------------------------
   const securityTxtPath = firstExisting(projectRoot, SECURITY_TXT_PATHS);
@@ -144,7 +156,7 @@ function parseSecurityTxt(text) {
  *
  * @returns {Array<{ file: string, created: boolean }>}
  */
-function writeTemplates(projectRoot, { now = new Date() } = {}) {
+function writeTemplates(projectRoot, { now = new Date(), lang = 'en', country = null } = {}) {
   const pkg = readJson(path.join(projectRoot, 'package.json')) || {};
   const repo = repositoryUrl(pkg.repository);
   const advisories = repo && /github\.com/.test(repo) ? `${repo}/security/advisories/new` : null;
@@ -156,7 +168,7 @@ function writeTemplates(projectRoot, { now = new Date() } = {}) {
   if (existingMd) {
     results.push({ file: existingMd, created: false });
   } else {
-    fs.writeFileSync(path.join(projectRoot, 'SECURITY.md'), securityMdTemplate({ name, major, advisories }));
+    fs.writeFileSync(path.join(projectRoot, 'SECURITY.md'), securityMdTemplate({ name, major, advisories, lang, country }));
     results.push({ file: 'SECURITY.md', created: true });
   }
 
@@ -167,16 +179,26 @@ function writeTemplates(projectRoot, { now = new Date() } = {}) {
     const base = fs.existsSync(path.join(projectRoot, 'public')) ? 'public/.well-known' : '.well-known';
     fs.mkdirSync(path.join(projectRoot, base), { recursive: true });
     const expires = new Date(now.getTime() + 364 * DAY).toISOString().replace(/\.\d{3}Z$/, 'Z');
-    fs.writeFileSync(path.join(projectRoot, base, 'security.txt'), securityTxtTemplate({ advisories, repo, expires }));
+    fs.writeFileSync(path.join(projectRoot, base, 'security.txt'), securityTxtTemplate({ advisories, repo, expires, lang }));
     results.push({ file: `${base}/security.txt`, created: true });
   }
   return results;
 }
 
-function securityMdTemplate({ name, major, advisories }) {
+function securityMdTemplate({ name, major, advisories, lang, country }) {
+  if (lang === 'es') return securityMdTemplateEs({ name, major, advisories, country });
   const channel = advisories
     ? `Report it privately through [GitHub Security Advisories](${advisories}), or by email to TODO: security@example.com.`
     : 'Report it privately by email to TODO: security@example.com.';
+  const local = reportingGuide(country).local;
+  const csirtSection = local && local.country === 'ES' ? `
+### Spain — INCIBE-CERT
+
+Our main establishment is in Spain, so our coordinating CSIRT is **INCIBE-CERT**. Access to the ENISA
+Single Reporting Platform is requested from INCIBE (${local.srpAccess.contact}), which validates the
+manufacturer before registration. Cybersecurity incidents outside the CRA go to ${local.otherChannels[0].contact};
+if we are unsure whether a case is in CRA scope, we report it through INCIBE-CERT's usual channels first.
+` : '';
   return `# Security Policy
 
 ## Supported Versions
@@ -213,15 +235,74 @@ we notify the coordinating CSIRT and ENISA through the Single Reporting Platform
 - a **final report within 14 days** after a corrective measure is available (one month for severe incidents).
 
 Affected users are informed of the issue and of the corrective measures to take.
-`;
+${csirtSection}`;
 }
 
-function securityTxtTemplate({ advisories, repo, expires }) {
+function securityMdTemplateEs({ name, major, advisories, country }) {
+  const channel = advisories
+    ? `Comunícalo de forma privada mediante [GitHub Security Advisories](${advisories}) o por correo a TODO: security@example.com.`
+    : 'Comunícalo de forma privada por correo a TODO: security@example.com.';
+  const local = reportingGuide(country).local;
+  const csirt = local && local.country === 'ES'
+    ? `nuestro CSIRT coordinador, **INCIBE-CERT**, y a ENISA a través de la plataforma única de notificación (SRP)`
+    : 'el CSIRT coordinador de nuestro Estado miembro y a ENISA a través de la plataforma única de notificación (SRP)';
+  const spain = local && local.country === 'ES' ? `
+### España — INCIBE-CERT
+
+Nuestro establecimiento principal está en España, por lo que nuestro CSIRT coordinador es **INCIBE-CERT**:
+
+- El acceso a la plataforma SRP de ENISA se solicita a INCIBE (${local.srpAccess.contact}), que valida al
+  fabricante antes de completar el registro.
+- Los incidentes de ciberseguridad que no entran en el CRA se comunican a ${local.otherChannels[0].contact}.
+- Si dudamos de si un caso entra en el ámbito del CRA, lo notificamos primero por los canales habituales
+  de INCIBE-CERT, que nos indica si debe registrarse formalmente en la SRP.
+` : '';
+  return `# Política de seguridad
+
+## Versiones con soporte
+
+| Versión | Soporte | Fin del soporte de seguridad |
+| ------- | ------- | ---------------------------- |
+| ${major}.x     | ✅      | TODO: AAAA-MM-DD             |
+| < ${major}.0   | ❌      | —                            |
+
+**Periodo de soporte:** ${name} ${major}.x recibe actualizaciones de seguridad hasta el TODO: AAAA-MM-DD
+(el Reglamento de Ciberresiliencia de la UE prevé al menos 5 años, o el tiempo de uso previsto del producto).
+
+## Cómo comunicar una vulnerabilidad
+
+Por favor, **no** abras una incidencia pública para problemas de seguridad.
+
+${channel}
+
+Indica la versión afectada, una descripción del problema y, si es posible, los pasos para reproducirlo.
+
+## Nuestro proceso (divulgación coordinada de vulnerabilidades)
+
+- Acusamos recibo en un máximo de **3 días hábiles** y enviamos una primera valoración en **10 días hábiles**.
+- Acordamos con quien informa una fecha de publicación, normalmente en **90 días**, y le damos crédito si lo desea.
+- Las correcciones se publican como actualizaciones de seguridad, separadas de las de funcionalidad cuando es
+  posible, y se anuncian en las notas de versión y en un GitHub Security Advisory.
+
+## Reglamento de Ciberresiliencia de la UE — Notificación (art. 14)
+
+Cuando tenemos conocimiento de una vulnerabilidad activamente explotada en ${name}, o de un incidente grave que
+afecte a su seguridad, lo notificamos a ${csirt}:
+
+- una **alerta temprana en 24 horas**,
+- una **notificación en 72 horas**,
+- un **informe final en 14 días** desde que haya una medida correctora (en incidentes graves, un mes tras la notificación).
+
+Informamos a los usuarios afectados del problema y de las medidas que deben aplicar.
+${spain}`;
+}
+
+function securityTxtTemplate({ advisories, repo, expires, lang }) {
   const lines = ['# RFC 9116 — https://securitytxt.org', 'Contact: mailto:TODO-security@example.com'];
   if (advisories) lines.push(`Contact: ${advisories}`);
   lines.push(`Expires: ${expires}`);
   if (repo) lines.push(`Policy: ${repo}/blob/HEAD/SECURITY.md`);
-  lines.push('Preferred-Languages: en', '');
+  lines.push(`Preferred-Languages: ${lang === 'es' ? 'es, en' : 'en'}`, '');
   return lines.join('\n');
 }
 

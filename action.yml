@@ -18,6 +18,9 @@ inputs:
   production:
     description: 'Audit production dependencies only.'
     default: 'false'
+  country:
+    description: 'Country of your main establishment (ISO code, e.g. ES): the CRA Art. 14 notice shows its CSIRT''s steps.'
+    default: ''
   sbom-input:
     description: 'Audit this CycloneDX/SPDX JSON SBOM (any language: Syft, cdxgen, Trivy…) instead of the npm lockfile. Relative to the workspace.'
     default: ''
@@ -64,6 +67,7 @@ runs:
         IN_FAIL_ON: ${{ inputs.fail-on }}
         IN_FAIL_ON_KEV: ${{ inputs.fail-on-kev }}
         IN_PRODUCTION: ${{ inputs.production }}
+        IN_COUNTRY: ${{ inputs.country }}
         IN_SBOM_INPUT: ${{ inputs.sbom-input }}
         IN_SARIF: ${{ inputs.sarif }}
         IN_SBOM: ${{ inputs.sbom }}
@@ -76,6 +80,7 @@ runs:
         args=(audit --fail-on "$IN_FAIL_ON")
         [ "$IN_FAIL_ON_KEV" = "false" ] && args+=(--no-fail-on-kev)
         [ "$IN_PRODUCTION" = "true" ] && args+=(--production)
+        [ -n "$IN_COUNTRY" ] && args+=(--country "$IN_COUNTRY")
         input=()
         [ -n "$IN_SBOM_INPUT" ] && input=(--input "$(abs "$IN_SBOM_INPUT")")
         args+=("${input[@]}")

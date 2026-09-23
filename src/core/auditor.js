@@ -6,6 +6,7 @@ const { validateSbom } = require('./sbom-validator');
 const { checkLicenses } = require('./license-checker');
 const { acceptance } = require('./vex');
 const { loadProject } = require('./project-source');
+const { reportingGuide } = require('./reporting');
 
 /**
  * @typedef {object} AuditResult
@@ -151,6 +152,8 @@ async function runAudit(projectRoot, policy, policySource, options = {}) {
       : getProject(projectRoot, sections),
     policySource,
     generatedAt: new Date().toISOString(),
+    // Where CRA Art. 14 notifications go for the manufacturer's country.
+    reporting: reportingGuide(policy.country),
     sections,
     gate: { passed: reasons.every((r) => r.passed), reasons },
   };
