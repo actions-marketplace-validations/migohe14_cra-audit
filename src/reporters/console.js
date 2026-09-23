@@ -30,34 +30,76 @@ function reportConsole(report) {
 }
 
 function renderVulnerabilities(section) {
-  logger.heading('1) Known vulnerabilities (CRA Art. 13)');
+  logger.heading('1) Known vulnerabilities (CRA Annex I · Art. 14)');
   if (!section.ok) {
     logger.error(section.error);
     return;
   }
+  logger.detail(describeSources(section));
+  for (const warning of section.warnings || []) logger.warn(warning);
 
   const c = section.counts;
   if (c.total === 0) {
-    logger.success('No known vulnerabilities. Meets the "zero exploitable vulnerabilities" requirement.');
+    logger.success('No known vulnerabilities. Meets the "no known exploitable vulnerabilities" requirement.');
     return;
   }
 
   logger.log(
     `  ${color.red(`${c.critical} critical`)} · ${color.red(`${c.high} high`)} · ` +
-    `${color.yellow(`${c.moderate} moderate`)} · ${color.yellow(`${c.low} low`)} · ${color.gray(`${c.info} info`)}`
+    `${color.yellow(`${c.moderate} moderate`)} · ${color.yellow(`${c.low} low`)} · ${color.gray(`${c.info} info`)}` +
+    (c.unknown ? color.gray(` · ${c.unknown} unrated`) : '') +
+    (c.kev ? ` · ${color.red(color.bold(`${c.kev} actively exploited (KEV)`))}` : '') +
+    (c.malicious ? ` · ${color.red(color.bold(`${c.malicious} MALICIOUS`))}` : '')
   );
 
-  const top = section.vulnerabilities.slice(0, 15);
+  // Malicious and exploited findings first: they are the urgent ones.
+  const urgency = (v) => (v.malicious ? 2 : v.kev ? 1 : 0);
+  const ordered = [...section.vulnerabilities].sort((a, b) => urgency(b) - urgency(a));
+  const top = ordered.slice(0, 15);
   for (const vuln of top) {
     const sev = (SEVERITY_COLORS[vuln.severity] || color.gray)(vuln.severity.toUpperCase().padEnd(8));
-    const fix = describeFix(vuln.fixAvailable);
-    logger.log(`  ${sev} ${color.bold(vuln.name)} ${color.gray(vuln.range || '')} ${fix}`);
-    const adv = vuln.sources[0];
-    if (adv && adv.title) logger.detail(`${adv.title}${adv.url ? ' — ' + adv.url : ''}`);
+    const tags = (vuln.malicious ? color.red(color.bold('[MALICIOUS] ')) : '') + (vuln.kev ? color.red(color.bold('[KEV] ')) : '');
+    const label = vuln.version ? `${vuln.name}@${vuln.version}` : vuln.name;
+    const fix = vuln.malicious ? color.red('(remove it and rotate any exposed credentials)') : describeFix(vuln.fixAvailable);
+    logger.log(`  ${sev} ${tags}${color.bold(label)} ${color.gray(vuln.range || '')} ${fix}`);
+    for (const adv of vuln.sources.slice(0, 3)) {
+      const kev = adv.kev ? color.red(` [KEV since ${adv.kev.dateAdded}]`) : '';
+      const id = adv.id ? `${adv.id}${(adv.aliases || []).filter((a) => a.startsWith('CVE-')).map((a) => ` / ${a}`).join('')} ` : '';
+      logger.detail(`${id}${adv.title || ''}${kev}${adv.url ? ' — ' + adv.url : ''}`);
+    }
+    if (vuln.sources.length > 3) logger.detail(`… and ${vuln.sources.length - 3} more advisories.`);
   }
-  if (section.vulnerabilities.length > top.length) {
-    logger.detail(`… and ${section.vulnerabilities.length - top.length} more.`);
+  if (ordered.length > top.length) {
+    logger.detail(`… and ${ordered.length - top.length} more.`);
   }
+
+  if (c.kev) renderArticle14Notice();
+  if (c.malicious) {
+    logger.log('');
+    logger.error(color.bold('Malicious package(s) detected: treat this as a security incident.'));
+    logger.detail('Remove the package, reinstall from a clean lockfile, and rotate every credential');
+    logger.detail('available to machines that installed it (npm/GitHub tokens, cloud keys, CI secrets).');
+  }
+}
+
+function describeSources(section) {
+  if (section.source !== 'osv') return 'Source: npm audit';
+  const kev = section.kev && section.kev.checked
+    ? `CISA KEV ${section.kev.catalogVersion || ''} (${section.kev.entries} entries)`.replace('  ', ' ')
+    : `CISA KEV not checked (${(section.kev && section.kev.error) || 'unavailable'})`;
+  return `Sources: OSV.dev (GitHub advisories + OpenSSF malicious packages) · ${kev} · ${section.scanned} components`;
+}
+
+/** CRA Art. 14 reporting clock, shown when a KEV-listed vulnerability is found. */
+function renderArticle14Notice() {
+  logger.log('');
+  logger.warn(color.bold('CRA Art. 14 — actively exploited vulnerability in a dependency'));
+  logger.detail('If it affects a product with digital elements you place on the EU market, notify');
+  logger.detail('the coordinating CSIRT and ENISA through the Single Reporting Platform:');
+  logger.detail('  • Early warning ........ within 24 hours of becoming aware');
+  logger.detail('  • Notification ......... within 72 hours');
+  logger.detail('  • Final report ......... within 14 days after a corrective measure is available');
+  logger.detail('Assess exploitability in your product first; document the decision either way.');
 }
 
 function describeFix(fix) {
@@ -122,7 +164,7 @@ function renderLicenses(section) {
 function renderSummary(report) {
   logger.heading('Result');
   for (const item of report.gate.reasons) {
-    const mark = item.passed ? color.green('✔') : color.red('✖');
+    const mark = !item.passed ? color.red('✖') : item.warning ? color.yellow('!') : color.green('✔');
     logger.log(`  ${mark} ${item.label}`);
   }
   logger.log('');

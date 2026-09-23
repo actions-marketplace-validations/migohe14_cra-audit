@@ -21,21 +21,28 @@ const { checkLicenses } = require('./license-checker');
  * @param {object} policy
  * @param {string|null} policySource
  * @param {{ only?: 'vulnerabilities'|'sbom'|'licenses' }} [options]
- * @returns {AuditResult}
+ * @returns {Promise<AuditResult>}
  */
-function runAudit(projectRoot, policy, policySource, options = {}) {
+async function runAudit(projectRoot, policy, policySource, options = {}) {
   const { only } = options;
   const sections = {};
   const reasons = [];
 
   // --- 1. Vulnerabilities -------------------------------------------------
   if (!only || only === 'vulnerabilities') {
-    const vulns = scanVulnerabilities(projectRoot, { production: policy.productionOnly });
+    const vulns = await scanVulnerabilities(projectRoot, {
+      production: policy.productionOnly,
+      source: policy.vulnerabilitySource,
+    });
     sections.vulnerabilities = vulns;
 
     if (!vulns.ok) {
       reasons.push({ label: `Vulnerabilities could not be analyzed: ${vulns.error}`, passed: false });
     } else {
+      for (const warning of vulns.warnings || []) {
+        reasons.push({ label: warning, passed: true, warning: true });
+      }
+      reasons.push(...exploitationReasons(vulns, policy));
       const blocking = countBlocking(vulns, policy);
       reasons.push({
         label: blocking === 0
@@ -97,20 +104,66 @@ function runAudit(projectRoot, policy, policySource, options = {}) {
   };
 }
 
+/**
+ * Gate reasons for the OSV source: malicious packages always block (they are
+ * compromised releases, not bugs, so the allowlist cannot accept them), and
+ * actively exploited vulnerabilities (CISA KEV) block unless `failOnKev` is off.
+ */
+function exploitationReasons(vulns, policy) {
+  if (vulns.source !== 'osv') return [];
+  const reasons = [];
+
+  const malicious = vulns.vulnerabilities.filter((v) => v.malicious);
+  reasons.push({
+    label: malicious.length === 0
+      ? 'No malicious packages (OpenSSF malicious-packages via OSV.dev)'
+      : `${malicious.length} malicious package(s): ${malicious.map((v) => `${v.name}@${v.version}`).join(', ')}`,
+    passed: malicious.length === 0,
+  });
+
+  if (!vulns.kev || !vulns.kev.checked) {
+    reasons.push({
+      label: `Actively exploited vulnerabilities not checked: ${(vulns.kev && vulns.kev.error) || 'CISA KEV unavailable'}`,
+      passed: true,
+      warning: true,
+    });
+    return reasons;
+  }
+
+  const exploited = vulns.vulnerabilities.filter((v) => v.kev && !isAllowlisted(v, policy));
+  reasons.push({
+    label: exploited.length === 0
+      ? 'No actively exploited vulnerabilities (CISA KEV)'
+      : `${exploited.length} component(s) with actively exploited vulnerabilities (CISA KEV) — CRA Art. 14 reporting may apply`,
+    passed: exploited.length === 0 || policy.failOnKev === false,
+    warning: exploited.length > 0 && policy.failOnKev === false,
+  });
+  return reasons;
+}
+
 function countBlocking(vulns, policy) {
   const threshold = SEVERITY_ORDER.indexOf(policy.failOn);
   if (threshold === -1) return 0;
-  const allowlist = new Set((policy.vulnerabilities && policy.vulnerabilities.allowlist) || []);
 
   let count = 0;
   for (const vuln of vulns.vulnerabilities) {
     if (SEVERITY_ORDER.indexOf(vuln.severity) < threshold) continue;
-    const isAllowlisted = vuln.sources.some(
-      (src) => src.url && [...allowlist].some((id) => src.url.includes(id))
-    ) || allowlist.has(vuln.name);
-    if (!isAllowlisted) count++;
+    if (!vuln.malicious && isAllowlisted(vuln, policy)) continue;
+    count++;
   }
   return count;
+}
+
+/**
+ * A finding is accepted when the policy allowlist names the package, or every
+ * advisory on it by id/alias (GHSA, CVE) or advisory URL.
+ */
+function isAllowlisted(vuln, policy) {
+  const allowlist = (policy.vulnerabilities && policy.vulnerabilities.allowlist) || [];
+  if (!allowlist.length) return false;
+  if (allowlist.includes(vuln.name)) return true;
+  return vuln.sources.every((src) => allowlist.some((id) =>
+    [src.id, ...(src.aliases || [])].includes(id) || (src.url && src.url.includes(id))));
 }
 
 function getProject(projectRoot, sections) {

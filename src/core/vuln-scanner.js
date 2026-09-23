@@ -4,24 +4,174 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { runJson } = require('../utils/exec');
-const { exists } = require('../utils/fs');
-const { parseLockfile, toNpmLockfile } = require('./lockfile-parser');
+const { exists, readJson } = require('../utils/fs');
+const { parseLockfile, toNpmLockfile, componentKey } = require('./lockfile-parser');
+const {
+  queryOsv, osvSeverity, cvssScore, isMalicious, fixedVersion, compareSemver,
+} = require('./osv');
+const { loadKev } = require('./kev');
 
 const SEVERITY_ORDER = ['info', 'low', 'moderate', 'high', 'critical'];
 
 /**
- * Scans direct and transitive dependencies for known vulnerabilities using
- * `npm audit --json`. The CRA requires products to ship "without known
- * exploitable vulnerabilities", so this is the core gate of the audit.
+ * Scans direct and transitive dependencies for known vulnerabilities. The CRA
+ * requires products to ship "without known exploitable vulnerabilities"
+ * (Annex I) and, since 11 September 2026, the reporting of actively exploited
+ * ones (Art. 14), so this is the core gate of the audit.
  *
- * npm projects are audited in place. Yarn/pnpm projects (which have no npm
- * lockfile) are audited against a synthetic `package-lock.json` generated from
- * their lockfile, preserving the exact installed versions.
+ * Sources:
+ *  - `osv` (default): every exact `name@version` from the lockfile is checked
+ *    against OSV.dev (GitHub advisories + OpenSSF malicious packages), and the
+ *    CVEs found are cross-checked with the CISA KEV catalogue.
+ *  - `npm`: `npm audit`. Also the fallback when OSV.dev is unreachable.
  *
  * @param {string} projectRoot
- * @param {{ production?: boolean }} [options]
+ * @param {{ production?: boolean, source?: 'osv'|'npm', kev?: boolean }} [options]
+ * @returns {Promise<object>}
  */
-function scanVulnerabilities(projectRoot, { production = false } = {}) {
+async function scanVulnerabilities(projectRoot, { production = false, source = 'osv', kev = true } = {}) {
+  if (source === 'npm') return npmAuditSection(projectRoot, { production });
+
+  const parsed = parseLockfile(projectRoot);
+  if (!parsed.ok) {
+    return { ok: false, error: parsed.error, counts: emptyCounts(), vulnerabilities: [] };
+  }
+
+  const rootPkg = readJson(path.join(projectRoot, 'package.json')) || {};
+  const components = production ? productionComponents(parsed, rootPkg) : parsed.components;
+  const scannable = components.filter((c) => c.name && c.version);
+
+  const [osv, catalogue] = await Promise.all([
+    queryOsv(scannable),
+    kev ? loadKev() : Promise.resolve(null),
+  ]);
+
+  if (!osv.ok) {
+    const fallback = npmAuditSection(projectRoot, { production });
+    fallback.warnings = [`${osv.error}; fell back to \`npm audit\` (no malicious-package or KEV check).`];
+    return fallback;
+  }
+
+  const direct = new Set(parsed.root.dependsOn);
+  const vulnerabilities = [];
+  for (const c of scannable) {
+    const key = componentKey(c.name, c.version);
+    const records = osv.byComponent.get(key);
+    if (!records || !records.length) continue;
+    vulnerabilities.push(toFinding(c, records, direct.has(key), catalogue));
+  }
+
+  const counts = emptyCounts();
+  for (const v of vulnerabilities) {
+    counts[v.severity] = (counts[v.severity] || 0) + 1;
+    if (v.malicious) counts.malicious++;
+    if (v.kev) counts.kev++;
+  }
+  counts.total = vulnerabilities.length;
+
+  return {
+    ok: true,
+    source: 'osv',
+    scanned: scannable.length,
+    kev: catalogue
+      ? (catalogue.ok
+        ? { checked: true, catalogVersion: catalogue.catalogVersion, entries: catalogue.count }
+        : { checked: false, error: catalogue.error })
+      : { checked: false, error: 'KEV check disabled' },
+    counts,
+    vulnerabilities: sortBySeverity(vulnerabilities),
+  };
+}
+
+/** One finding per vulnerable component, aggregating its OSV records. */
+function toFinding(component, records, isDirect, catalogue) {
+  const sources = records.map((record) => {
+    const aliases = record.aliases || [];
+    const cves = [record.id, ...aliases].filter((id) => /^CVE-/i.test(id));
+    const kevEntry = catalogue && catalogue.ok
+      ? cves.map((cve) => catalogue.byCve.get(cve.toUpperCase())).find(Boolean) || null
+      : null;
+    return {
+      id: record.id,
+      aliases,
+      title: record.summary || (isMalicious(record) ? 'Malicious package' : record.id),
+      url: `https://osv.dev/vulnerability/${record.id}`,
+      severity: osvSeverity(record),
+      cvss: cvssScore(record),
+      cwe: (record.database_specific && record.database_specific.cwe_ids) || [],
+      malicious: isMalicious(record),
+      fixed: fixedVersion(record, component.name, component.version),
+      kev: kevEntry,
+    };
+  });
+
+  const severity = sources.map((s) => s.severity)
+    .reduce((max, s) => (severityRank(s) > severityRank(max) ? s : max), 'unknown');
+  const fixes = sources.map((s) => s.fixed);
+  // Only claim a fix when every advisory has one; suggest the highest of them.
+  const fix = fixes.every(Boolean)
+    ? fixes.reduce((a, b) => (compareSemver(a, b) >= 0 ? a : b))
+    : null;
+
+  return {
+    name: component.name,
+    version: component.version,
+    severity,
+    direct: isDirect,
+    range: null,
+    malicious: sources.some((s) => s.malicious),
+    kev: sources.some((s) => s.kev),
+    fixAvailable: fix
+      ? { name: component.name, version: fix, breaking: major(fix) !== major(component.version) }
+      : false,
+    // Malicious and actively exploited advisories first, then by severity.
+    sources: sources.sort((a, b) => Number(b.malicious) - Number(a.malicious) ||
+      Number(Boolean(b.kev)) - Number(Boolean(a.kev)) ||
+      severityRank(b.severity) - severityRank(a.severity)),
+  };
+}
+
+/**
+ * Components reachable from the production dependencies declared in
+ * package.json (`dependencies` + `optionalDependencies`), following the graph.
+ */
+function productionComponents(parsed, rootPkg) {
+  const prodNames = new Set([
+    ...Object.keys(rootPkg.dependencies || {}),
+    ...Object.keys(rootPkg.optionalDependencies || {}),
+  ]);
+  const byKey = new Map(parsed.components.map((c) => [componentKey(c.name, c.version), c]));
+  const queue = parsed.root.dependsOn.filter((key) => prodNames.has(byKey.has(key) ? byKey.get(key).name : null));
+  const seen = new Set(queue);
+  while (queue.length) {
+    const comp = byKey.get(queue.shift());
+    if (!comp) continue;
+    for (const dep of comp.dependsOn) {
+      if (!seen.has(dep)) { seen.add(dep); queue.push(dep); }
+    }
+  }
+  return parsed.components.filter((c) => seen.has(componentKey(c.name, c.version)));
+}
+
+function severityRank(severity) {
+  return SEVERITY_ORDER.indexOf(severity);
+}
+
+function major(version) {
+  return parseInt(String(version).split('.')[0], 10);
+}
+
+/** `npm audit` source, used on request or as the OSV fallback. */
+function npmAuditSection(projectRoot, { production }) {
+  const result = npmAudit(projectRoot, { production });
+  return {
+    ...result,
+    source: 'npm-audit',
+    kev: { checked: false, error: 'npm audit reports no CVE identifiers' },
+  };
+}
+
+function npmAudit(projectRoot, { production = false } = {}) {
   if (hasNpmLockfile(projectRoot)) {
     return runNpmAudit(projectRoot, { production });
   }
@@ -187,7 +337,7 @@ function normalizeFix(fixAvailable) {
 }
 
 function emptyCounts() {
-  return { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 };
+  return { info: 0, low: 0, moderate: 0, high: 0, critical: 0, unknown: 0, malicious: 0, kev: 0, total: 0 };
 }
 
 function sumCounts(counts) {

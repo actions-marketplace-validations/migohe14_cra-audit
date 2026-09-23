@@ -44,8 +44,11 @@ async function visualizeCommand(flags) {
 
   logger.info(`Analyzing ${parsed.components.length} components from ${parsed.root.name}@${parsed.root.version}…`);
 
-  // Vulnerabilities + licenses run locally (no network).
-  const vulns = scanVulnerabilities(projectRoot, { production: policy.productionOnly });
+  // --offline keeps the previous behaviour: npm audit instead of OSV.dev/KEV.
+  const vulns = await scanVulnerabilities(projectRoot, {
+    production: policy.productionOnly,
+    source: flags.offline ? 'npm' : policy.vulnerabilitySource,
+  });
   const licenses = checkLicenses(projectRoot, policy.licenses || {});
 
   // Maintenance enrichment over the network (opt-out with --offline).
@@ -87,9 +90,10 @@ async function visualizeCommand(flags) {
 
 /** Merges all data sources into the view model consumed by the HTML reporter. */
 function buildModel(parsed, vulns, licenses, enrichment) {
+  // OSV findings are per name@version; npm audit findings only per name.
   const vulnByName = new Map();
   if (vulns.ok) {
-    for (const v of vulns.vulnerabilities) vulnByName.set(v.name, v);
+    for (const v of vulns.vulnerabilities) vulnByName.set(v.version ? `${v.name}@${v.version}` : v.name, v);
   }
   const licByKey = new Map();
   if (licenses.ok) {
@@ -98,7 +102,7 @@ function buildModel(parsed, vulns, licenses, enrichment) {
 
   const components = parsed.components.map((c) => {
     const key = `${c.name}@${c.version}`;
-    const vuln = vulnByName.get(c.name) || null;
+    const vuln = vulnByName.get(key) || vulnByName.get(c.name) || null;
     const lic = licByKey.get(key) || null;
     const enr = enrichment.get(key) || {};
 

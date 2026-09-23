@@ -18,6 +18,11 @@ const DEFAULT_POLICY = {
   // Email or URL of the SBOM creator (TR-03183-2 §5.2.1). Defaults to the
   // project's package.json author, homepage or repository.
   sbomCreator: null,
+  // Vulnerability source: `osv` (OSV.dev + CISA KEV) or `npm` (npm audit).
+  vulnerabilitySource: 'osv',
+  // Fail when a dependency has an actively exploited vulnerability (CISA KEV),
+  // the trigger of the CRA Art. 14 reporting obligation.
+  failOnKev: true,
   // Audit only production dependencies (recommended for shipped products).
   productionOnly: false,
   vulnerabilities: {

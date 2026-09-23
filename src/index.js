@@ -6,7 +6,7 @@
  * Example:
  *   const { runAudit, loadPolicy } = require('cra-audit');
  *   const { policy, source } = loadPolicy(process.cwd());
- *   const report = runAudit(process.cwd(), policy, source);
+ *   const report = await runAudit(process.cwd(), policy, source);
  */
 
 const { runAudit } = require('./core/auditor');

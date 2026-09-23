@@ -8,21 +8,28 @@
 
 /**
  * @param {string} url
- * @param {{ timeout?: number, headers?: object }} [options]
+ * @param {{ timeout?: number, headers?: object, body?: any }} [options]
+ *   `body`: sent as a JSON POST when present.
  * @returns {Promise<{ ok: boolean, status: number, json: any, headers: Headers }|null>}
  */
-async function fetchJson(url, { timeout = 8000, headers = {} } = {}) {
+async function fetchJson(url, { timeout = 8000, headers = {}, body } = {}) {
   if (typeof fetch !== 'function') return null;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
-    const res = await fetch(url, {
+    const init = {
       headers: { Accept: 'application/json', ...headers },
       signal: controller.signal,
       redirect: 'follow',
-    });
+    };
+    if (body !== undefined) {
+      init.method = 'POST';
+      init.headers['Content-Type'] = 'application/json';
+      init.body = JSON.stringify(body);
+    }
+    const res = await fetch(url, init);
     let json = null;
     try {
       json = await res.json();

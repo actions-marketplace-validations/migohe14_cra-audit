@@ -13,9 +13,9 @@ const { reportJson } = require('../reporters/json');
  *
  * @param {object} flags Parsed CLI flags.
  * @param {'vulnerabilities'|'sbom'|'licenses'} [only]
- * @returns {number} Process exit code.
+ * @returns {Promise<number>} Process exit code.
  */
-function auditCommand(flags, only) {
+async function auditCommand(flags, only) {
   const projectRoot = resolveRoot(flags);
   if (!projectRoot) return 1;
 
@@ -28,7 +28,7 @@ function auditCommand(flags, only) {
   }
 
   const policy = applyFlagOverrides(policyResult.policy, flags);
-  const report = runAudit(projectRoot, policy, policyResult.source, { only });
+  const report = await runAudit(projectRoot, policy, policyResult.source, { only });
 
   if (flags.json) {
     reportJson(report, { outputPath: flags.output });
@@ -56,6 +56,9 @@ function applyFlagOverrides(policy, flags) {
   if (flags.production) merged.productionOnly = true;
   if (flags.format) merged.sbomFormat = flags.format;
   if (flags.noSbom) merged.requireSbom = false;
+  if (flags.vulnSource) merged.vulnerabilitySource = flags.vulnSource;
+  if (flags.failOnKev) merged.failOnKev = true;
+  if (flags.noFailOnKev) merged.failOnKev = false;
   return merged;
 }
 

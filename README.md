@@ -47,11 +47,29 @@ Known limits: Yarn Berry lockfiles only store Yarn's own cache checksum, not the
 
 > CRA Annex I · TR-03183 Part 2 — *"Transparency through SBOM"*.
 
-### 2. "Zero known vulnerabilities" audit
+### 2. Known, actively exploited and malicious dependencies
 
-Scans **direct and transitive** dependencies (from the lockfile) with `npm audit` and blocks the audit if there are exploitable vulnerabilities above the configured threshold. For Yarn/pnpm projects (which have no npm lockfile), `cra-audit` synthesizes a temporary `package-lock.json` from the exact versions pinned in `yarn.lock` / `pnpm-lock.yaml` and runs `npm audit --package-lock-only` against it, so the scanned versions match what the package manager actually resolved.
+Checks every **direct and transitive** dependency, at the exact version pinned in the lockfile, against:
 
-> CRA Art. 13 — *products must be placed on the market without known exploitable vulnerabilities*.
+| Source | What it finds | Effect on the audit |
+| --- | --- | --- |
+| [OSV.dev](https://osv.dev) — GitHub Advisory Database | Known vulnerabilities, with severity, CVE aliases and the version that fixes them | Fails at or above `--fail-on` (default `high`) |
+| OSV.dev — [OpenSSF malicious packages](https://github.com/ossf/malicious-packages) | Compromised releases (`MAL-*`), e.g. the Shai-Hulud worm versions | **Always fails**; cannot be allowlisted |
+| [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | Vulnerabilities with evidence of **active exploitation** | Fails by default (`--no-fail-on-kev` to only warn) and prints the CRA Art. 14 reporting clock |
+
+```text
+  HIGH     [KEV] vite@6.2.3  (fix: vite@6.4.3)
+    GHSA-4r4m-qw57-chr8 / CVE-2025-31125 Vite has a `server.fs.deny` bypassed … [KEV since 2026-01-22]
+
+⚠ CRA Art. 14 — actively exploited vulnerability in a dependency
+    • Early warning ........ within 24 hours of becoming aware
+    • Notification ......... within 72 hours
+    • Final report ......... within 14 days after a corrective measure is available
+```
+
+Only package names and versions are sent to `api.osv.dev`; the KEV catalogue is downloaded from cisa.gov (or CISA's GitHub mirror). If KEV cannot be reached the report says so instead of silently passing, and if OSV.dev is unreachable the audit falls back to `npm audit`. `--vuln-source npm` uses `npm audit` directly.
+
+> CRA Annex I Part I (2)(a) — *placed on the market without known exploitable vulnerabilities*. Art. 14 — *actively exploited vulnerabilities must be reported within 24 hours*.
 
 ### 3. Third-party component check
 
@@ -138,6 +156,8 @@ cra-audit --help
 | `--format <fmt>` | SBOM format: `cyclonedx` (default) or `spdx`. |
 | `--creator <contact>` | Email or URL of the SBOM creator (TR-03183-2 §5.2.1). Defaults to the project's `package.json` `author` / `homepage` / `repository`. |
 | `--fail-on <sev>` | Minimum severity that fails the audit: `info`, `low`, `moderate`, `high`, `critical`. |
+| `--vuln-source <src>` | `osv` (default: OSV.dev + CISA KEV) or `npm` (`npm audit`). |
+| `--no-fail-on-kev` | Report actively exploited (CISA KEV) vulnerabilities as a warning instead of failing. |
 | `--production`, `--prod` | Audit production dependencies only. |
 | `--no-sbom` | Do not require an SBOM in the full audit. |
 | `--json` | Machine-readable JSON output. |
@@ -190,6 +210,8 @@ Create a `.cra-audit.json` file at the project root to customize the rules (ther
 ```json
 {
   "failOn": "high",
+  "failOnKev": true,
+  "vulnerabilitySource": "osv",
   "requireSbom": true,
   "sbomFormat": "cyclonedx",
   "sbomCreator": "security@example.com",
@@ -206,11 +228,13 @@ Create a `.cra-audit.json` file at the project root to customize the rules (ther
 ```
 
 - `failOn`: minimum severity that blocks the audit.
+- `failOnKev`: fail when a dependency has an actively exploited vulnerability (CISA KEV). Default `true`.
+- `vulnerabilitySource`: `osv` (OSV.dev + CISA KEV) or `npm` (`npm audit`).
 - `requireSbom`: require the SBOM to meet the TR-03183-2 required data fields.
 - `sbomFormat`: `cyclonedx` or `spdx`.
 - `sbomCreator`: email or URL of the entity that creates the SBOM (usually the manufacturer).
 - `productionOnly`: audit production dependencies only.
-- `vulnerabilities.allowlist`: advisory/CVE identifiers accepted with documented justification.
+- `vulnerabilities.allowlist`: package names or advisory ids (GHSA, CVE) accepted with documented justification, e.g. when the vulnerable code is not reachable in your product. Malicious packages (`MAL-*`) cannot be allowlisted.
 - `licenses.allow` / `licenses.deny`: allowed / denied lists (SPDX id).
 - `licenses.failOnMissing`: treat undocumented licenses as a failure.
 
@@ -245,7 +269,7 @@ const {
 } = require('cra-audit');
 
 const { policy, source } = loadPolicy(process.cwd());
-const report = runAudit(process.cwd(), policy, source);
+const report = await runAudit(process.cwd(), policy, source);
 console.log(report.gate.passed ? 'OK' : 'FAILED');
 
 // Maintenance data + custom HTML report
@@ -258,8 +282,12 @@ const signals = await enrichComponents(components, { network: true, github: true
 ## Requirements
 
 - Node.js >= 18 (uses native `fetch` and `node --test`).
-- `npm` available on the `PATH` (for `npm audit`).
+- Network access to `api.osv.dev` and `cisa.gov` (or `raw.githubusercontent.com` for the KEV mirror). `npm` on the `PATH` is only needed for `--vuln-source npm` or the offline fallback.
 - A lockfile present: `package-lock.json` / `npm-shrinkwrap.json` (npm), `yarn.lock` (Yarn classic or Berry) or `pnpm-lock.yaml` (pnpm). Run `npm install` / `yarn` / `pnpm install` if missing.
+
+## See also
+
+- [hulud-party-scanner](https://www.npmjs.com/package/hulud-party-scanner) — incident response for a machine that may have installed a compromised package: lifecycle-hook analysis, malicious code patterns and Shai-Hulud artifacts in the home directory.
 
 ## Legal notice
 

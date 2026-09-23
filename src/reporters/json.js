@@ -11,7 +11,7 @@ const { writeJson } = require('../utils/fs');
 function reportJson(report, { outputPath } = {}) {
   if (outputPath) {
     writeJson(outputPath, report);
-    logger.success(`Informe JSON escrito en: ${outputPath}`);
+    logger.success(`JSON report written to: ${outputPath}`);
   } else {
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   }
