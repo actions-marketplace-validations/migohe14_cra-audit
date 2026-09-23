@@ -5,6 +5,7 @@ const { generateSbom } = require('./sbom-generator');
 const { validateSbom } = require('./sbom-validator');
 const { checkLicenses } = require('./license-checker');
 const { acceptance } = require('./vex');
+const { readSbom } = require('./sbom-reader');
 
 /**
  * @typedef {object} AuditResult
@@ -21,19 +22,24 @@ const { acceptance } = require('./vex');
  * @param {string} projectRoot
  * @param {object} policy
  * @param {string|null} policySource
- * @param {{ only?: 'vulnerabilities'|'sbom'|'licenses' }} [options]
+ * With `input` (path to a CycloneDX/SPDX JSON SBOM) the audit runs on that
+ * SBOM instead of the npm lockfile, so it covers any ecosystem.
+ *
+ * @param {{ only?: 'vulnerabilities'|'sbom'|'licenses', input?: string }} [options]
  * @returns {Promise<AuditResult>}
  */
 async function runAudit(projectRoot, policy, policySource, options = {}) {
-  const { only } = options;
+  const { only, input } = options;
   const sections = {};
   const reasons = [];
+  const parsed = input ? readSbom(input) : null;
 
   // --- 1. Vulnerabilities -------------------------------------------------
   if (!only || only === 'vulnerabilities') {
     const vulns = await scanVulnerabilities(projectRoot, {
       production: policy.productionOnly,
       source: policy.vulnerabilitySource,
+      parsed,
     });
     sections.vulnerabilities = vulns;
 
@@ -56,7 +62,25 @@ async function runAudit(projectRoot, policy, policySource, options = {}) {
   }
 
   // --- 2. SBOM ------------------------------------------------------------
-  if (!only || only === 'sbom') {
+  if ((!only || only === 'sbom') && parsed) {
+    // An input SBOM comes from third-party tooling that rarely carries the
+    // manufacturer fields TR-03183 requires: report gaps without blocking.
+    const sbom = parsed.ok
+      ? { ok: true, input: parsed.sourceFile, format: parsed.format, componentCount: parsed.components.length, validation: validateSbom(parsed.document) }
+      : { ok: false, input: parsed.sourceFile, error: parsed.error };
+    sections.sbom = sbom;
+    if (!sbom.ok) {
+      reasons.push({ label: `The input SBOM could not be read: ${sbom.error}`, passed: false });
+    } else if (policy.requireSbom) {
+      reasons.push({
+        label: sbom.validation.valid
+          ? 'Input SBOM valid against the TR-03183-2 required data fields'
+          : `Input SBOM misses ${sbom.validation.failedChecks.length} TR-03183-2 requirement(s) (see \`cra-audit sbom check -i\`)`,
+        passed: true,
+        warning: !sbom.validation.valid,
+      });
+    }
+  } else if (!only || only === 'sbom') {
     const sbom = generateSbom(projectRoot, { format: policy.sbomFormat, creator: policy.sbomCreator });
     if (sbom.ok) {
       sbom.validation = validateSbom(sbom.document);
@@ -79,7 +103,7 @@ async function runAudit(projectRoot, policy, policySource, options = {}) {
 
   // --- 3. Licenses --------------------------------------------------------
   if (!only || only === 'licenses') {
-    const licenses = checkLicenses(projectRoot, policy.licenses);
+    const licenses = checkLicenses(projectRoot, policy.licenses, { parsed });
     sections.licenses = licenses;
 
     if (!licenses.ok) {
@@ -98,7 +122,9 @@ async function runAudit(projectRoot, policy, policySource, options = {}) {
   }
 
   return {
-    project: getProject(projectRoot, sections),
+    project: parsed && parsed.ok
+      ? { name: parsed.root.name, version: parsed.root.version, sbom: parsed.sourceFile }
+      : getProject(projectRoot, sections),
     policySource,
     generatedAt: new Date().toISOString(),
     sections,

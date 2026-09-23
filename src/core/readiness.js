@@ -102,9 +102,14 @@ function checkReadiness(projectRoot, { now = new Date() } = {}) {
   }
 
   // --- SBOM ---------------------------------------------------------------------
+  // npm projects: a lockfile cra-audit builds the SBOM from. Other ecosystems:
+  // an SBOM produced by their own tooling (Syft, cdxgen…) kept in the repo.
   const parsed = parseLockfile(projectRoot);
-  add('sbom', 'A lockfile to generate the SBOM from', 'required', parsed.ok,
-    parsed.ok ? `${parsed.lockfileName} (${parsed.components.length} components)` : parsed.error, 'CRA Annex I Part II (1)');
+  const sbomFile = parsed.ok ? null : findSbomFile(projectRoot);
+  add('sbom', 'SBOM available (npm lockfile or an SBOM file)', 'required', parsed.ok || sbomFile,
+    parsed.ok ? `${parsed.lockfileName} (${parsed.components.length} components)`
+      : sbomFile ? `Found ${sbomFile}` : `${parsed.error} For other ecosystems, commit an SBOM (e.g. sbom.cdx.json).`,
+    'CRA Annex I Part II (1)');
 
   add('package-repository', 'package.json links the source repository', 'recommended', Boolean(repositoryUrl(pkg.repository)),
     repositoryUrl(pkg.repository) || 'No "repository" field', 'TR-03183-2 §5.2.4');
@@ -214,6 +219,21 @@ function securityTxtTemplate({ advisories, repo, expires }) {
   if (repo) lines.push(`Policy: ${repo}/blob/HEAD/SECURITY.md`);
   lines.push('Preferred-Languages: en', '');
   return lines.join('\n');
+}
+
+/** An SBOM file at the root or in sbom/: *.cdx.json, *.spdx.json, bom.json… */
+function findSbomFile(root) {
+  for (const dir of ['', 'sbom']) {
+    let names = [];
+    try {
+      names = fs.readdirSync(path.join(root, dir));
+    } catch {
+      continue;
+    }
+    const match = names.find((n) => /(\.cdx\.json|\.spdx\.json|^bom\.json|^sbom\.json)$/i.test(n));
+    if (match) return dir ? `${dir}/${match}` : match;
+  }
+  return null;
 }
 
 function firstExisting(root, candidates) {

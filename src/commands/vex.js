@@ -7,6 +7,8 @@ const { loadPolicy } = require('../core/policy');
 const { scanVulnerabilities } = require('../core/vuln-scanner');
 const { buildVex } = require('../core/vex');
 const { creatorFromManifest } = require('../core/installed-metadata');
+const { readSbom } = require('../core/sbom-reader');
+const { inputPath } = require('./audit');
 
 /**
  * `cra-audit vex` — writes a VEX document (CycloneDX 1.6 or OpenVEX 0.2.0)
@@ -16,7 +18,9 @@ const { creatorFromManifest } = require('../core/installed-metadata');
  * @returns {Promise<number>} exit code
  */
 async function vexCommand(flags) {
-  const projectRoot = findProjectRoot(flags.cwd || process.cwd());
+  const input = inputPath(flags);
+  const start = flags.cwd || process.cwd();
+  const projectRoot = input ? path.resolve(start) : findProjectRoot(start);
   if (!projectRoot) {
     logger.error('No package.json found. Run the command inside an npm project.');
     return 1;
@@ -36,9 +40,15 @@ async function vexCommand(flags) {
     return 1;
   }
 
+  const parsed = input ? readSbom(input) : null;
+  if (parsed && !parsed.ok) {
+    logger.error(parsed.error);
+    return 1;
+  }
   const vulns = await scanVulnerabilities(projectRoot, {
     production: flags.production || policy.productionOnly,
     source: flags.vulnSource || policy.vulnerabilitySource,
+    parsed,
   });
   if (!vulns.ok) {
     logger.error(vulns.error);
@@ -53,7 +63,9 @@ async function vexCommand(flags) {
   const pkg = readJson(path.join(projectRoot, 'package.json')) || {};
   const creator = creatorFromManifest(pkg);
   const author = policy.sbomCreator || (creator && (creator.email || creator.url)) || null;
-  const product = { name: pkg.name || path.basename(projectRoot), version: pkg.version || '0.0.0' };
+  const product = parsed
+    ? { name: parsed.root.name, version: parsed.root.version, purl: parsed.root.purl }
+    : { name: pkg.name || path.basename(projectRoot), version: pkg.version || '0.0.0' };
   const document = buildVex(product, vulns, policy, { format, author });
 
   const count = format === 'openvex' ? document.statements.length : document.vulnerabilities.length;

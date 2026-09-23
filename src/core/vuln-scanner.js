@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { runJson } = require('../utils/exec');
 const { exists, readJson } = require('../utils/fs');
-const { parseLockfile, toNpmLockfile, componentKey } = require('./lockfile-parser');
+const { parseLockfile, toNpmLockfile, componentKey, buildPurl } = require('./lockfile-parser');
 const {
   queryOsv, osvSeverity, cvssScore, isMalicious, fixedVersion, compareSemver,
 } = require('./osv');
@@ -25,20 +25,34 @@ const SEVERITY_ORDER = ['info', 'low', 'moderate', 'high', 'critical'];
  *    CVEs found are cross-checked with the CISA KEV catalogue.
  *  - `npm`: `npm audit`. Also the fallback when OSV.dev is unreachable.
  *
+ * An existing SBOM of any ecosystem can be scanned instead of the lockfile by
+ * passing the result of readSbom() as `parsed`; its components are looked up
+ * in OSV.dev by Package URL.
+ *
  * @param {string} projectRoot
- * @param {{ production?: boolean, source?: 'osv'|'npm', kev?: boolean }} [options]
+ * @param {{ production?: boolean, source?: 'osv'|'npm', kev?: boolean, parsed?: object }} [options]
  * @returns {Promise<object>}
  */
-async function scanVulnerabilities(projectRoot, { production = false, source = 'osv', kev = true } = {}) {
-  if (source === 'npm') return npmAuditSection(projectRoot, { production });
+async function scanVulnerabilities(projectRoot, { production = false, source = 'osv', kev = true, parsed: given } = {}) {
+  const fromSbom = Boolean(given && given.manager === 'sbom');
+  if (source === 'npm') {
+    if (fromSbom) {
+      return { ok: false, error: '`npm audit` cannot scan an input SBOM; use the default OSV source.', counts: emptyCounts(), vulnerabilities: [] };
+    }
+    return npmAuditSection(projectRoot, { production });
+  }
 
-  const parsed = parseLockfile(projectRoot);
+  const parsed = given || parseLockfile(projectRoot);
   if (!parsed.ok) {
     return { ok: false, error: parsed.error, counts: emptyCounts(), vulnerabilities: [] };
   }
 
-  const rootPkg = readJson(path.join(projectRoot, 'package.json')) || {};
-  const components = production ? productionComponents(parsed, rootPkg) : parsed.components;
+  let components = parsed.components;
+  if (production) {
+    components = fromSbom
+      ? components.filter((c) => !c.optional)
+      : productionComponents(parsed, readJson(path.join(projectRoot, 'package.json')) || {});
+  }
   const scannable = components.filter((c) => c.name && c.version);
 
   const [osv, catalogue] = await Promise.all([
@@ -47,6 +61,7 @@ async function scanVulnerabilities(projectRoot, { production = false, source = '
   ]);
 
   if (!osv.ok) {
+    if (fromSbom) return { ok: false, error: osv.error, counts: emptyCounts(), vulnerabilities: [] };
     const fallback = npmAuditSection(projectRoot, { production });
     fallback.warnings = [`${osv.error}; fell back to \`npm audit\` (no malicious-package or KEV check).`];
     return fallback;
@@ -55,7 +70,7 @@ async function scanVulnerabilities(projectRoot, { production = false, source = '
   const direct = new Set(parsed.root.dependsOn);
   const vulnerabilities = [];
   for (const c of scannable) {
-    const key = componentKey(c.name, c.version);
+    const key = c.key || componentKey(c.name, c.version);
     const records = osv.byComponent.get(key);
     if (!records || !records.length) continue;
     vulnerabilities.push(toFinding(c, records, direct.has(key), catalogue));
@@ -73,6 +88,8 @@ async function scanVulnerabilities(projectRoot, { production = false, source = '
     ok: true,
     source: 'osv',
     scanned: scannable.length,
+    input: fromSbom ? { file: parsed.sourceFile, format: parsed.format, unidentified: parsed.unidentified } : null,
+    ecosystems: [...new Set(scannable.map((c) => c.ecosystem || 'npm'))].sort(),
     kev: catalogue
       ? (catalogue.ok
         ? { checked: true, catalogVersion: catalogue.catalogVersion, entries: catalogue.count }
@@ -100,7 +117,7 @@ function toFinding(component, records, isDirect, catalogue) {
       cvss: cvssScore(record),
       cwe: (record.database_specific && record.database_specific.cwe_ids) || [],
       malicious: isMalicious(record),
-      fixed: fixedVersion(record, component.name, component.version),
+      fixed: fixedVersion(record, component.osvName || component.name, component.version),
       kev: kevEntry,
     };
   });
@@ -116,6 +133,8 @@ function toFinding(component, records, isDirect, catalogue) {
   return {
     name: component.name,
     version: component.version,
+    purl: component.purl || buildPurl(component.name, component.version),
+    ecosystem: component.ecosystem || 'npm',
     severity,
     direct: isDirect,
     range: null,
@@ -158,7 +177,7 @@ function severityRank(severity) {
 }
 
 function major(version) {
-  return parseInt(String(version).split('.')[0], 10);
+  return parseInt(String(version).replace(/^v/i, '').split('.')[0], 10);
 }
 
 /** `npm audit` source, used on request or as the OSV fallback. */

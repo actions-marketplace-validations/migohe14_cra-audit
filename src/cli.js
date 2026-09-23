@@ -211,7 +211,8 @@ ${c.bold('OPTIONS')}
   ${c.cyan('--json')}                Machine-readable JSON output.
   ${c.cyan('--sarif <path>')}        Also write the audit as SARIF 2.1.0 (GitHub code scanning).
   ${c.cyan('--output, -o <path>')}   Write the result/SBOM/HTML to a file.
-  ${c.cyan('--input, -i <path>')}    Existing SBOM to validate (for "sbom check").
+  ${c.cyan('--input, -i <path>')}    Existing CycloneDX/SPDX JSON SBOM: validate it (sbom check) or audit it
+                        instead of the npm lockfile — any ecosystem (audit, vuln, licenses, vex).
   ${c.cyan('--config, -c <path>')}   Path to the security policy (.cra-audit.json).
   ${c.cyan('--cwd <path>')}          Project directory to audit.
   ${c.cyan('--no-color')}            Disable colors.
@@ -232,6 +233,9 @@ ${c.bold('EXAMPLES')}
 
   ${c.gray('# Generate a CycloneDX SBOM on disk')}
   npx cra-audit sbom generate -o sbom.cdx.json
+
+  ${c.gray('# Any language: audit an SBOM from Syft, cdxgen, Trivy, CycloneDX plugins…')}
+  npx cra-audit -i sbom.cdx.json
 
   ${c.gray('# VEX with the exploitability assessments recorded in .cra-audit.json')}
   npx cra-audit vex -o vex.cdx.json

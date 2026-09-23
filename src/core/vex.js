@@ -106,18 +106,18 @@ function acceptance(finding, policy) {
 /**
  * Builds a VEX document for the vulnerability findings of an audit.
  *
- * @param {{ name: string, version: string }} product
+ * @param {{ name: string, version: string, purl?: string }} product
  * @param {object} vulnSection Result of scanVulnerabilities().
  * @param {object} policy
  * @param {{ format?: 'cyclonedx'|'openvex', author?: string|null }} [options]
  */
 function buildVex(product, vulnSection, policy, { format = 'cyclonedx', author = null } = {}) {
   const entries = normalizeAllowlist(policy);
-  const productPurl = buildPurl(product.name, product.version);
+  const productPurl = product.purl || buildPurl(product.name, product.version);
   const statements = [];
 
   for (const finding of vulnSection.vulnerabilities || []) {
-    const purl = buildPurl(finding.name, finding.version);
+    const purl = finding.purl || buildPurl(finding.name, finding.version);
     for (const source of finding.sources) {
       const assessment = finding.malicious ? null : assessmentFor(finding, source, entries);
       statements.push({ finding, source, purl, assessment });

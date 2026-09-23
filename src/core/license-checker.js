@@ -7,11 +7,16 @@ const { readInstalledManifest, licenseFromManifest } = require('./installed-meta
  * Resolves and evaluates the license of every third-party component.
  * CRA / TR-03183 require every component's license to be documented.
  *
+ * Pass `parsed` (from readSbom()) to check the licenses declared in an input
+ * SBOM instead of the lockfile and node_modules.
+ *
  * @param {string} projectRoot
  * @param {{ allow?: string[], deny?: string[] }} [policy]
+ * @param {{ parsed?: object }} [options]
  */
-function checkLicenses(projectRoot, policy = {}) {
-  const parsed = parseLockfile(projectRoot);
+function checkLicenses(projectRoot, policy = {}, { parsed: given } = {}) {
+  const parsed = given || parseLockfile(projectRoot);
+  const fromSbom = parsed.manager === 'sbom';
   if (!parsed.ok) {
     return { ok: false, error: parsed.error, components: [], summary: emptySummary() };
   }
@@ -20,12 +25,13 @@ function checkLicenses(projectRoot, policy = {}) {
   const deny = normalizeList(policy.deny);
 
   const components = parsed.components.map((c) => {
-    const license = c.license || licenseFromManifest(readInstalledManifest(projectRoot, c));
+    const license = c.license || (fromSbom ? null : licenseFromManifest(readInstalledManifest(projectRoot, c)));
     const normalized = license ? String(license) : null;
     const status = classify(normalized, allow, deny);
     return {
       name: c.name,
       version: c.version,
+      purl: c.purl || null,
       license: normalized,
       status, // 'ok' | 'missing' | 'denied' | 'not-allowed'
     };

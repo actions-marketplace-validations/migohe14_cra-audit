@@ -55,3 +55,27 @@ jobs:
           check "$SARIF" "d.version === '2.1.0'"
           check "$SBOM" "d.specVersion === '1.6'"
           check "$VEX" "Array.isArray(d.vulnerabilities)"
+      # Any-language path: a CycloneDX SBOM with Log4Shell (CISA KEV) must fail.
+      - uses: ./
+        id: polyglot
+        continue-on-error: true
+        with:
+          sbom-input: test/fixtures/sbom-input/bom.cdx.json
+          sarif: polyglot.sarif
+          upload-sarif: 'false'
+          vex: polyglot-vex.cdx.json
+      - name: Check the SBOM-input run
+        env:
+          EXIT_CODE: ${{ steps.polyglot.outputs.exit-code }}
+          SARIF: ${{ steps.polyglot.outputs.sarif }}
+          VEX: ${{ steps.polyglot.outputs.vex }}
+        run: |
+          test "$EXIT_CODE" = "1"
+          node -e "
+            const fs = require('fs');
+            const sarif = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+            const vex = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+            const kev = sarif.runs[0].results.some((r) => r.message.text.includes('CISA KEV') && r.message.text.includes('log4j-core'));
+            const log4shell = vex.vulnerabilities.some((v) => v.id === 'CVE-2021-44228');
+            if (!kev || !log4shell) process.exit(1);
+          " "$SARIF" "$VEX"

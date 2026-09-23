@@ -29,10 +29,11 @@ const SECURITY_SEVERITY = { critical: 9.5, high: 8.0, moderate: 5.5, low: 2.0, i
 function buildSarif(report, projectRoot, policy = {}) {
   const rules = new Map();
   const results = [];
-  const lock = lockfileLocator(projectRoot);
+  const vulns = report.sections.vulnerabilities;
+  const inputFile = vulns && vulns.input ? vulns.input.file : null;
+  const lock = lockfileLocator(projectRoot, inputFile);
   const assessments = normalizeAllowlist(policy);
 
-  const vulns = report.sections.vulnerabilities;
   if (vulns && vulns.ok) {
     for (const finding of vulns.vulnerabilities) {
       for (const source of finding.sources) {
@@ -46,7 +47,7 @@ function buildSarif(report, projectRoot, policy = {}) {
             : finding.malicious || source.kev || ['critical', 'high'].includes(source.severity || finding.severity) ? 'error'
               : (source.severity || finding.severity) === 'moderate' ? 'warning' : 'note',
           message: { text: vulnerabilityMessage(finding, source) },
-          locations: [lock.locate(finding.name, finding.version)],
+          locations: [lock.locate(finding.name, finding.version, finding.purl)],
           partialFingerprints: { 'craAudit/v1': `${ruleId}:${finding.name}@${finding.version || ''}` },
         };
         if (accepted) {
@@ -77,7 +78,7 @@ function buildSarif(report, projectRoot, policy = {}) {
           ruleId,
           level,
           message: { text: text(c) },
-          locations: [lock.locate(c.name, c.version)],
+          locations: [lock.locate(c.name, c.version, c.purl)],
           partialFingerprints: { 'craAudit/v1': `${ruleId}:${c.name}@${c.version}` },
         });
       }
@@ -163,13 +164,18 @@ function licenseRule(ruleId) {
 }
 
 /**
- * Finds the line of `name@version` in the project lockfile so each alert
- * points at the exact entry. Falls back to package.json line 1.
+ * Finds the line of `name@version` in the project lockfile (or of the purl in
+ * an input SBOM) so each alert points at the exact entry. Falls back to line 1.
  */
-function lockfileLocator(projectRoot) {
+function lockfileLocator(projectRoot, inputFile = null) {
   const repoRoot = findRepoRoot(projectRoot);
-  const parsed = parseLockfile(projectRoot);
-  const file = parsed.lockfileName ? path.join(projectRoot, parsed.lockfileName) : path.join(projectRoot, 'package.json');
+  let file;
+  if (inputFile) {
+    file = path.resolve(inputFile);
+  } else {
+    const parsed = parseLockfile(projectRoot);
+    file = parsed.lockfileName ? path.join(projectRoot, parsed.lockfileName) : path.join(projectRoot, 'package.json');
+  }
   let lines = [];
   try {
     lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
@@ -178,8 +184,8 @@ function lockfileLocator(projectRoot) {
   }
   const uri = path.relative(repoRoot, file).split(path.sep).join('/');
 
-  const locate = (name, version) => {
-    const line = findEntryLine(lines, name, version);
+  const locate = (name, version, purl) => {
+    const line = inputFile ? findPurlLine(lines, purl) : findEntryLine(lines, name, version);
     return {
       physicalLocation: {
         artifactLocation: { uri, uriBaseId: '%SRCROOT%' },
@@ -207,6 +213,15 @@ function findEntryLine(lines, name, version) {
     }
   }
   return 1;
+}
+
+/** Line of an SBOM that holds the purl (qualifiers may follow it). */
+function findPurlLine(lines, purl) {
+  if (!purl) return 1;
+  const escaped = purl.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+  const exact = new RegExp(`${escaped}(?![\\w.+-])`);
+  const index = lines.findIndex((line) => exact.test(line));
+  return index === -1 ? 1 : index + 1;
 }
 
 /** Nearest folder with a .git entry: SARIF paths must be repository-relative. */

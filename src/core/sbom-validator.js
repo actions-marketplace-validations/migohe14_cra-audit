@@ -118,9 +118,15 @@ function validateSpdx(doc) {
   pushCheck(checks, 'components', 'Contains at least one package', packages.length > 0);
 
   const relationships = toArray(doc.relationships);
+  // Dependency edges as written by SPDX tools (Syft uses CONTAINS and
+  // DEPENDENCY_OF); the described package is the product, not a component.
+  const graphTypes = /^(DEPENDS_ON|CONTAINS|DEPENDENCY_OF|[A-Z_]+_DEPENDENCY_OF)$/;
+  const described = new Set(toArray(doc.documentDescribes));
   const inGraph = new Set();
   for (const r of relationships) {
-    if (r && r.relationshipType === 'DEPENDS_ON') {
+    if (!r) continue;
+    if (r.relationshipType === 'DESCRIBES' && r.spdxElementId === 'SPDXRef-DOCUMENT') described.add(r.relatedSpdxElement);
+    if (graphTypes.test(r.relationshipType)) {
       inGraph.add(r.spdxElementId);
       inGraph.add(r.relatedSpdxElement);
     }
@@ -138,7 +144,7 @@ function validateSpdx(doc) {
   };
   for (const pkg of packages) {
     const label = pkg.name || pkg.SPDXID || 'unknown';
-    if (pkg.SPDXID === 'SPDXRef-Package-root') continue;
+    if (pkg.SPDXID === 'SPDXRef-Package-root' || described.has(pkg.SPDXID)) continue;
     if (!pkg.versionInfo || pkg.versionInfo === 'NOASSERTION') { stats.missingVersion++; issues.push(`Package without a version: ${label}`); }
     if (!isAssertion(pkg.originator) && !isAssertion(pkg.supplier)) { stats.missingCreator++; issues.push(`Package without an originator: ${label}`); }
     if (!pkg.packageFileName) { stats.missingFilename++; issues.push(`Package without a filename: ${label}`); }
@@ -158,7 +164,7 @@ function validateSpdx(doc) {
   pushCheck(checks, 'componentHashes', 'All packages have a SHA-512 checksum', stats.missingHash === 0);
   pushCheck(checks, 'componentLicenses', 'All packages have a license', stats.missingLicense === 0);
   pushCheck(checks, 'componentIdentifiers', 'All packages have a purl', stats.missingPurl === 0);
-  pushCheck(checks, 'dependencyGraph', 'Dependency relationships (DEPENDS_ON) declared', stats.missingDependencies === 0);
+  pushCheck(checks, 'dependencyGraph', 'Dependency relationships declared for every package', stats.missingDependencies === 0);
 
   return summarize('spdx', checks, issues, stats);
 }

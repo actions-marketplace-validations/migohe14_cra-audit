@@ -7,25 +7,32 @@ const BATCH_SIZE = 1000; // OSV querybatch limit
 
 /**
  * Queries OSV.dev (https://osv.dev) for the advisories affecting each exact
- * `name@version`. OSV aggregates the GitHub Advisory Database (GHSA) and the
- * OpenSSF malicious-packages feed (MAL-*), which lists compromised releases
- * such as the ones published by the Shai-Hulud worm.
+ * component version. OSV aggregates the GitHub Advisory Database (GHSA), the
+ * ecosystem databases (PyPA, RustSec, Go…) and the OpenSSF malicious-packages
+ * feed (MAL-*), which lists compromised releases such as the ones published by
+ * the Shai-Hulud worm.
  *
- * Only package names and versions leave the machine.
+ * Components with a Package URL (from an input SBOM, any ecosystem) are
+ * queried by purl; lockfile components by npm name and version. Only package
+ * identifiers and versions leave the machine.
  *
- * @param {Array<{ name: string, version: string }>} components
+ * @param {Array<{ name: string, version: string, purl?: string, key?: string }>} components
  * @param {{ timeout?: number, concurrency?: number }} [options]
  * @returns {Promise<{ ok: true, byComponent: Map<string, object[]> } | { ok: false, error: string }>}
- *   `byComponent` is keyed by `name@version` and holds full OSV records.
+ *   `byComponent` is keyed by the component key and holds full OSV records.
  */
 async function queryOsv(components, { timeout = 30000, concurrency = 8 } = {}) {
   const idsByKey = new Map();
+  const queryFor = (c) => (c.ecosystem && c.purl
+    ? { package: { purl: c.purl } } // the version is part of the purl
+    : { package: { name: c.name, ecosystem: 'npm' }, version: c.version });
+  const keyFor = (c) => c.key || `${c.name}@${c.version}`;
 
   for (let i = 0; i < components.length; i += BATCH_SIZE) {
     const chunk = components.slice(i, i + BATCH_SIZE);
     const res = await fetchJson(`${OSV_API}/querybatch`, {
       timeout,
-      body: { queries: chunk.map((c) => ({ package: { name: c.name, ecosystem: 'npm' }, version: c.version })) },
+      body: { queries: chunk.map(queryFor) },
     });
     if (!res || !res.ok || !res.json || !Array.isArray(res.json.results)) {
       return { ok: false, error: `OSV.dev query failed${res ? ` (HTTP ${res.status})` : ' (network unreachable)'}` };
@@ -39,13 +46,13 @@ async function queryOsv(components, { timeout = 30000, concurrency = 8 } = {}) {
       while (pageToken) {
         const page = await fetchJson(`${OSV_API}/query`, {
           timeout,
-          body: { package: { name: chunk[j].name, ecosystem: 'npm' }, version: chunk[j].version, page_token: pageToken },
+          body: { ...queryFor(chunk[j]), page_token: pageToken },
         });
         if (!page || !page.ok || !page.json) break;
         ids.push(...(page.json.vulns || []).map((v) => v.id));
         pageToken = page.json.next_page_token;
       }
-      if (ids.length) idsByKey.set(`${chunk[j].name}@${chunk[j].version}`, ids);
+      if (ids.length) idsByKey.set(keyFor(chunk[j]), ids);
     }
   }
 
@@ -123,7 +130,7 @@ function isMalicious(record) {
 function fixedVersion(record, name, version) {
   let best = null;
   for (const affected of record.affected || []) {
-    if (!affected.package || affected.package.name !== name) continue;
+    if (!affected.package || normalizeName(affected.package.name) !== normalizeName(name)) continue;
     for (const range of affected.ranges || []) {
       if (range.type !== 'SEMVER' && range.type !== 'ECOSYSTEM') continue;
       let introduced = null;
@@ -140,17 +147,26 @@ function fixedVersion(record, name, version) {
 }
 
 /**
- * Compares two semver strings (major.minor.patch[-prerelease]).
- * Build metadata is ignored.
+ * OSV package names compare case-insensitively, and PyPI treats `-`, `_` and
+ * `.` as equivalent (PEP 503).
+ */
+function normalizeName(name) {
+  return String(name || '').toLowerCase().replace(/[-_.]+/g, '-');
+}
+
+/**
+ * Compares two semver strings (major.minor.patch[-prerelease]). Also used,
+ * approximately, for other ecosystems: a leading `v` (Go) is ignored and any
+ * number of numeric parts is compared. Build metadata is ignored.
  */
 function compareSemver(a, b) {
   const parse = (v) => {
-    const [core, pre] = String(v).split('+')[0].split(/-(.*)/s);
+    const [core, pre] = String(v).replace(/^v/i, '').split('+')[0].split(/-(.*)/s);
     return { nums: core.split('.').map((n) => parseInt(n, 10) || 0), pre: pre ? pre.split('.') : [] };
   };
   const pa = parse(a);
   const pb = parse(b);
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < Math.max(pa.nums.length, pb.nums.length, 3); i++) {
     const diff = (pa.nums[i] || 0) - (pb.nums[i] || 0);
     if (diff) return diff;
   }

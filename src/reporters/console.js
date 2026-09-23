@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('node:path');
 const { logger, color } = require('../utils/logger');
 
 const SEVERITY_COLORS = {
@@ -87,7 +88,11 @@ function describeSources(section) {
   const kev = section.kev && section.kev.checked
     ? `CISA KEV ${section.kev.catalogVersion || ''} (${section.kev.entries} entries)`.replace('  ', ' ')
     : `CISA KEV not checked (${(section.kev && section.kev.error) || 'unavailable'})`;
-  return `Sources: OSV.dev (GitHub advisories + OpenSSF malicious packages) · ${kev} · ${section.scanned} components`;
+  const scope = section.input
+    ? `${section.scanned} components from ${shortPath(section.input.file)} (${(section.ecosystems || []).join(', ')})` +
+      (section.input.unidentified ? ` · ${section.input.unidentified} without purl skipped` : '')
+    : `${section.scanned} components`;
+  return `Sources: OSV.dev (GitHub advisories + OpenSSF malicious packages) · ${kev} · ${scope}`;
 }
 
 /** CRA Art. 14 reporting clock, shown when a KEV-listed vulnerability is found. */
@@ -116,7 +121,7 @@ function renderSbom(section) {
     logger.error(section.error);
     return;
   }
-  logger.detail(`Format: ${section.format} · Components: ${section.componentCount}`);
+  logger.detail(`${section.input ? `Input SBOM: ${shortPath(section.input)} · ` : ''}Format: ${section.format} · Components: ${section.componentCount}`);
 
   if (section.validation) {
     const v = section.validation;
@@ -174,6 +179,12 @@ function renderSummary(report) {
     logger.error(color.bold('AUDIT FAILED — CRA compliance issues were detected.'));
   }
   logger.log('');
+}
+
+/** A path relative to the working directory when it is inside it. */
+function shortPath(file) {
+  const rel = path.relative(process.cwd(), file);
+  return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : file;
 }
 
 module.exports = { reportConsole };

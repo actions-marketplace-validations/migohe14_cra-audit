@@ -18,6 +18,9 @@ inputs:
   production:
     description: 'Audit production dependencies only.'
     default: 'false'
+  sbom-input:
+    description: 'Audit this CycloneDX/SPDX JSON SBOM (any language: Syft, cdxgen, Trivy…) instead of the npm lockfile. Relative to the workspace.'
+    default: ''
   sarif:
     description: 'Path of the SARIF report (relative to the workspace). Empty to skip.'
     default: 'cra-audit.sarif'
@@ -61,6 +64,7 @@ runs:
         IN_FAIL_ON: ${{ inputs.fail-on }}
         IN_FAIL_ON_KEV: ${{ inputs.fail-on-kev }}
         IN_PRODUCTION: ${{ inputs.production }}
+        IN_SBOM_INPUT: ${{ inputs.sbom-input }}
         IN_SARIF: ${{ inputs.sarif }}
         IN_SBOM: ${{ inputs.sbom }}
         IN_VEX: ${{ inputs.vex }}
@@ -72,6 +76,9 @@ runs:
         args=(audit --fail-on "$IN_FAIL_ON")
         [ "$IN_FAIL_ON_KEV" = "false" ] && args+=(--no-fail-on-kev)
         [ "$IN_PRODUCTION" = "true" ] && args+=(--production)
+        input=()
+        [ -n "$IN_SBOM_INPUT" ] && input=(--input "$(abs "$IN_SBOM_INPUT")")
+        args+=("${input[@]}")
         if [ -n "$IN_SARIF" ]; then
           args+=(--sarif "$(abs "$IN_SARIF")")
           echo "sarif=$(abs "$IN_SARIF")" >> "$GITHUB_OUTPUT"
@@ -87,7 +94,7 @@ runs:
           node "$CLI" sbom generate -o "$(abs "$IN_SBOM")" && echo "sbom=$(abs "$IN_SBOM")" >> "$GITHUB_OUTPUT"
         fi
         if [ -n "$IN_VEX" ]; then
-          node "$CLI" vex -o "$(abs "$IN_VEX")" && echo "vex=$(abs "$IN_VEX")" >> "$GITHUB_OUTPUT"
+          node "$CLI" vex "${input[@]}" -o "$(abs "$IN_VEX")" && echo "vex=$(abs "$IN_VEX")" >> "$GITHUB_OUTPUT"
         fi
         exit 0
 

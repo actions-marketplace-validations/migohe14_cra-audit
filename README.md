@@ -2,10 +2,10 @@
 
 [![npm](https://img.shields.io/npm/v/cra-audit)](https://www.npmjs.com/package/cra-audit) [![CI](https://github.com/migohe14/cra-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/migohe14/cra-audit/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/cra-audit)](LICENSE)
 
-> Compliance audit for the **Cyber Resilience Act** (Regulation EU 2024/2847) and the **BSI TR-03183** technical guideline, for npm projects.
+> Compliance audit for the **Cyber Resilience Act** (Regulation EU 2024/2847) and the **BSI TR-03183** technical guideline — native for npm, Yarn and pnpm, and for **any language** through its SBOM.
 
 `cra-audit` audits the installed dependencies of an npm project and checks the key requirements that the CRA imposes on "products with digital elements". It runs directly with `npx`, **without installation**, and has **no production dependencies** to minimize its own supply-chain surface.
-It reads the project lockfile natively, so it works with **npm** (`package-lock.json` / `npm-shrinkwrap.json`), **Yarn** (classic v1 and Berry v2+ `yarn.lock`) and **pnpm** (`pnpm-lock.yaml`) — auditing the exact versions each package manager pinned.
+It reads the project lockfile natively, so it works with **npm** (`package-lock.json` / `npm-shrinkwrap.json`), **Yarn** (classic v1 and Berry v2+ `yarn.lock`) and **pnpm** (`pnpm-lock.yaml`) — auditing the exact versions each package manager pinned. For **Python, Java, Go, Rust, .NET, PHP, Ruby…** pass the SBOM produced by your usual tooling with `-i` ([details](#8-any-language-input-sbom--i)).
 ```bash
 # Run ALL the law's checks (Vulnerabilities + Licenses + SBOM)
 npx cra-audit
@@ -151,6 +151,37 @@ npx cra-audit readiness --init   # creates SECURITY.md and .well-known/security.
 
 `--init` prefills the templates from `package.json` (GitHub private vulnerability reporting link, supported major version, a coordinated disclosure process and the Art. 14 24 h / 72 h / 14 days reporting commitments); fill in the `TODO` placeholders and run it again.
 
+### 8. Any language: input SBOM (`-i`)
+
+`audit`, `vuln`, `licenses` and `vex` accept an existing **CycloneDX JSON**, **SPDX 2.x JSON** or **SPDX 3.0 JSON-LD** SBOM instead of the npm lockfile. Every component is looked up in OSV.dev by its **Package URL**, so you get the same checks — known vulnerabilities, **malicious packages**, **CISA KEV** with the Art. 14 clock, licenses, VEX and SARIF — for any ecosystem OSV covers (Maven, PyPI, Go, crates.io, NuGet, Packagist, RubyGems, Hex, Pub, npm…).
+
+```bash
+# Generate the SBOM with the tool of your ecosystem…
+syft dir:. -o cyclonedx-json=sbom.cdx.json          # any language / container images
+cdxgen -o sbom.cdx.json .                            # multi-language
+mvn org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom   # Maven → target/bom.json
+cyclonedx-py environment -o sbom.cdx.json            # Python
+
+# …and audit it (no package.json needed)
+npx cra-audit -i sbom.cdx.json
+npx cra-audit vex -i sbom.cdx.json -o vex.cdx.json
+npx cra-audit -i sbom.cdx.json --sarif cra-audit.sarif
+```
+
+```text
+  Sources: OSV.dev … · CISA KEV (1721 entries) · 5 components from sbom.spdx.json (cargo, golang, maven, nuget) · 1 without purl skipped
+  CRITICAL [KEV] org.apache.logging.log4j:log4j-core@2.14.1  (fix: org.apache.logging.log4j:log4j-core@2.25.4)
+    GHSA-jfh8-c2jp-5v3q / CVE-2021-44228 Remote code injection in Log4j [KEV since 2021-12-10]
+  CRITICAL smallvec@1.6.0  (fix: smallvec@1.6.1)
+  HIGH     Newtonsoft.Json@12.0.1  (fix: Newtonsoft.Json@13.0.1, breaking)
+```
+
+Notes:
+- Components without a purl are skipped and counted in the output. Operating-system packages (deb/rpm/apk) are not looked up.
+- `--production` skips components with CycloneDX scope `optional`/`excluded` (or SPDX `DEV_DEPENDENCY_OF`).
+- The input SBOM is also checked against TR-03183-2; since third-party generators rarely include the manufacturer fields, gaps are reported as a **warning** in the audit (`cra-audit sbom check -i` shows the details and fails on them). For npm projects, `cra-audit sbom generate` produces a conforming SBOM.
+- SARIF alerts point at the line of the component's purl in the SBOM file.
+
 ---
 
 ## Usage
@@ -222,7 +253,7 @@ cra-audit --help
 | `--sarif <path>` | Also write the audit as SARIF 2.1.0 for GitHub code scanning. |
 | `--init` | With `readiness`: create SECURITY.md and security.txt templates. |
 | `--output`, `-o <path>` | Write the result / SBOM / HTML to a file. |
-| `--input`, `-i <path>` | Existing SBOM to validate (for `sbom check`). |
+| `--input`, `-i <path>` | Existing CycloneDX/SPDX JSON SBOM: validated by `sbom check`, or audited instead of the npm lockfile by `audit`, `vuln`, `licenses` and `vex` (any language). |
 | `--config`, `-c <path>` | Path to the security policy. |
 | `--cwd <path>` | Project directory to audit. |
 | `--no-color` | Disable colors. |
@@ -315,6 +346,17 @@ Suitable for CI/CD: a non-`0` code blocks the pipeline.
 
 Available in the GitHub Marketplace as [CRA Compliance Audit](https://github.com/marketplace/actions/cra-compliance-audit).
 
+For a Python, Java, Go… project, generate the SBOM first and pass it with `sbom-input`:
+
+```yaml
+      - uses: anchore/sbom-action@v0          # Syft
+        with: { format: cyclonedx-json, output-file: sbom.cdx.json, upload-artifact: false }
+      - uses: migohe14/cra-audit@v2
+        with:
+          sbom-input: sbom.cdx.json
+          vex: vex.cdx.json
+```
+
 ```yaml
 name: CRA audit
 on: [push, pull_request]
@@ -357,6 +399,7 @@ Every finding shows up in **Security → Code scanning**, pointing at the exact 
 | `sarif` | `cra-audit.sarif` | SARIF path (empty to skip). |
 | `upload-sarif` | `true` | Upload to code scanning (needs `security-events: write`; private repos need GitHub Advanced Security). |
 | `sbom` / `vex` | — | Also write the SBOM / VEX to these paths. |
+| `sbom-input` | — | Audit this CycloneDX/SPDX SBOM instead of the npm lockfile (any language). |
 | `args` | — | Extra `cra-audit audit` arguments. |
 
 Outputs: `exit-code`, `sarif`, `sbom`, `vex`. Without the action, `npx cra-audit --sarif cra-audit.sarif` does the same in any CI.

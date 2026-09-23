@@ -1,6 +1,7 @@
 'use strict';
 
-const { findProjectRoot } = require('../utils/fs');
+const fs = require('node:fs');
+const path = require('node:path');
 const { logger, color } = require('../utils/logger');
 const { checkReadiness, writeTemplates } = require('../core/readiness');
 
@@ -13,11 +14,7 @@ const { checkReadiness, writeTemplates } = require('../core/readiness');
  * @returns {number} exit code: 1 when a required check fails.
  */
 function readinessCommand(flags) {
-  const projectRoot = findProjectRoot(flags.cwd || process.cwd());
-  if (!projectRoot) {
-    logger.error('No package.json found. Run the command inside an npm project.');
-    return 1;
-  }
+  const projectRoot = findRepositoryRoot(flags.cwd || process.cwd());
 
   if (flags.init) {
     for (const { file, created } of writeTemplates(projectRoot)) {
@@ -54,6 +51,20 @@ function readinessCommand(flags) {
   }
   logger.detail('This checks what the repository documents; it is not legal advice.');
   return result.passed ? 0 : 1;
+}
+
+/**
+ * The nearest folder with a package.json or a .git entry: readiness applies to
+ * any repository, not only npm projects. Falls back to the start folder.
+ */
+function findRepositoryRoot(start) {
+  let dir = path.resolve(start);
+  for (;;) {
+    if (fs.existsSync(path.join(dir, 'package.json')) || fs.existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return path.resolve(start);
+    dir = parent;
+  }
 }
 
 module.exports = { readinessCommand };

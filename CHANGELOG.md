@@ -8,6 +8,20 @@ Releases are automated: pushing a `vX.Y.Z` tag publishes the package to npm
 (with provenance) and creates the GitHub Release from the matching section
 below, so add the section before running `npm version`.
 
+## [2.2.0] — Any language through its SBOM
+
+### Highlights
+
+- **Input SBOM** (`-i/--input` for `audit`, `vuln`, `licenses` and `vex`; `sbom-input` in the GitHub Action): audit a CycloneDX JSON, SPDX 2.x JSON or SPDX 3.0 JSON-LD SBOM from Syft, cdxgen, Trivy or the CycloneDX build plugins instead of the npm lockfile. Components are looked up in OSV.dev by Package URL, so **Python, Java, Go, Rust, .NET, PHP, Ruby…** projects get known vulnerabilities, malicious packages, CISA KEV with the Art. 14 clock, licenses, VEX and SARIF. No package.json needed.
+- SARIF alerts point at the purl's line in the SBOM; VEX statements use the components' real purls and the product's purl (or `pkg:generic`).
+- The input SBOM's TR-03183-2 gaps are reported as a warning in the audit (`sbom check -i` still fails on them).
+- `readiness` works in any repository (stops at the nearest package.json or .git) and accepts a committed SBOM file for non-npm projects.
+
+### Fixes
+
+- The SPDX validator no longer counts the described product as a component and accepts `CONTAINS` / `DEPENDENCY_OF` edges (as written by Syft).
+- Fixed versions resolve with each ecosystem's naming (Maven `group:artifact`, PyPI normalisation) and Go `v`-prefixed versions.
+
 ## [2.1.1] — GitHub Marketplace
 
 - The GitHub Action is published in the Marketplace as **CRA Compliance Audit** (the name "CRA Audit" is taken by a GitHub organization). Usage is unchanged: `uses: migohe14/cra-audit@v2`.

@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('node:path');
 const { findProjectRoot } = require('../utils/fs');
 const { logger } = require('../utils/logger');
 const { loadPolicy } = require('../core/policy');
@@ -29,7 +30,7 @@ async function auditCommand(flags, only) {
   }
 
   const policy = applyFlagOverrides(policyResult.policy, flags);
-  const report = await runAudit(projectRoot, policy, policyResult.source, { only });
+  const report = await runAudit(projectRoot, policy, policyResult.source, { only, input: inputPath(flags) });
 
   if (flags.json) {
     reportJson(report, { outputPath: flags.output });
@@ -43,14 +44,25 @@ async function auditCommand(flags, only) {
   return report.gate.passed ? 0 : 1;
 }
 
+/**
+ * Project root: the nearest package.json, or with `-i <sbom>` the working
+ * directory (any ecosystem, no package.json needed).
+ */
 function resolveRoot(flags) {
   const start = flags.cwd || process.cwd();
+  if (inputPath(flags)) return path.resolve(start);
   const root = findProjectRoot(start);
   if (!root) {
     logger.error('No package.json found. Run the command inside an npm project.');
     return null;
   }
   return root;
+}
+
+/** `-i/--input <sbom>` resolved against the working directory. */
+function inputPath(flags) {
+  if (typeof flags.input !== 'string') return null;
+  return path.resolve(flags.cwd || process.cwd(), flags.input);
 }
 
 /** CLI flags take precedence over the file-based policy. */
@@ -66,4 +78,4 @@ function applyFlagOverrides(policy, flags) {
   return merged;
 }
 
-module.exports = { auditCommand };
+module.exports = { auditCommand, inputPath };
