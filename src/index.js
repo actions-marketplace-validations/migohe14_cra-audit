@@ -18,6 +18,9 @@ const { checkLicenses } = require('./core/license-checker');
 const { parseLockfile } = require('./core/lockfile-parser');
 const { enrichComponents } = require('./core/enrich');
 const { buildHtml } = require('./reporters/html');
+const { buildSarif } = require('./reporters/sarif');
+const { buildVex } = require('./core/vex');
+const { checkReadiness } = require('./core/readiness');
 
 module.exports = {
   runAudit,
@@ -30,4 +33,7 @@ module.exports = {
   parseLockfile,
   enrichComponents,
   buildHtml,
+  buildSarif,
+  buildVex,
+  checkReadiness,
 };

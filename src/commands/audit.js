@@ -6,6 +6,7 @@ const { loadPolicy } = require('../core/policy');
 const { runAudit } = require('../core/auditor');
 const { reportConsole } = require('../reporters/console');
 const { reportJson } = require('../reporters/json');
+const { reportSarif } = require('../reporters/sarif');
 
 /**
  * `cra-audit [audit]` — runs the full compliance audit (vulnerabilities + SBOM
@@ -34,6 +35,9 @@ async function auditCommand(flags, only) {
     reportJson(report, { outputPath: flags.output });
   } else {
     reportConsole(report);
+  }
+  if (typeof flags.sarif === 'string') {
+    reportSarif(report, projectRoot, flags.sarif, { quiet: flags.json && !flags.output, policy });
   }
 
   return report.gate.passed ? 0 : 1;

@@ -8,6 +8,19 @@ Releases are automated: pushing a `vX.Y.Z` tag publishes the package to npm
 (with provenance) and creates the GitHub Release from the matching section
 below, so add the section before running `npm version`.
 
+## [2.1.0] — VEX, SARIF & GitHub Action, CRA readiness
+
+### Highlights
+
+- **VEX** (`cra-audit vex`): writes a CycloneDX 1.6 or OpenVEX 0.2.0 document with the exploitability of every known vulnerability. Assessments live in `.cra-audit.json` (`status`, `justification`, `detail`) and are also honoured by the audit gate; accepting a vulnerability without a justification now raises a warning.
+- **SARIF 2.1.0** (`--sarif <path>`): findings appear in GitHub code scanning at the exact lockfile line, with GitHub severities; malicious and CISA KEV findings are errors and `not_affected` assessments are shown as suppressed with their justification.
+- **GitHub Action** (`uses: migohe14/cra-audit@v2`): runs the audit, uploads the SARIF to code scanning and can write the SBOM and VEX as build evidence.
+- **CRA readiness** (`cra-audit readiness`): checks SECURITY.md, the vulnerability contact, the support period, security.txt (RFC 9116) and the Art. 14 reporting process. `--init` creates prefilled SECURITY.md and security.txt templates.
+
+### Compatibility
+
+- Plain-string allowlist entries keep working as before.
+
 ## [2.0.0] — OSV.dev, CISA KEV & malicious package detection
 
 ### Highlights

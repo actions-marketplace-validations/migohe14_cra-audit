@@ -4,6 +4,7 @@ const { scanVulnerabilities, SEVERITY_ORDER } = require('./vuln-scanner');
 const { generateSbom } = require('./sbom-generator');
 const { validateSbom } = require('./sbom-validator');
 const { checkLicenses } = require('./license-checker');
+const { acceptance } = require('./vex');
 
 /**
  * @typedef {object} AuditResult
@@ -43,6 +44,7 @@ async function runAudit(projectRoot, policy, policySource, options = {}) {
         reasons.push({ label: warning, passed: true, warning: true });
       }
       reasons.push(...exploitationReasons(vulns, policy));
+      reasons.push(...justificationReasons(vulns, policy));
       const blocking = countBlocking(vulns, policy);
       reasons.push({
         label: blocking === 0
@@ -155,15 +157,25 @@ function countBlocking(vulns, policy) {
 }
 
 /**
- * A finding is accepted when the policy allowlist names the package, or every
- * advisory on it by id/alias (GHSA, CVE) or advisory URL.
+ * A finding is accepted when every advisory on it is assessed as not_affected
+ * (or false_positive) in the policy allowlist. See ./vex.js.
  */
 function isAllowlisted(vuln, policy) {
-  const allowlist = (policy.vulnerabilities && policy.vulnerabilities.allowlist) || [];
-  if (!allowlist.length) return false;
-  if (allowlist.includes(vuln.name)) return true;
-  return vuln.sources.every((src) => allowlist.some((id) =>
-    [src.id, ...(src.aliases || [])].includes(id) || (src.url && src.url.includes(id))));
+  return acceptance(vuln, policy).accepted;
+}
+
+/**
+ * Accepted vulnerabilities must be documented (CRA Annex I Part II): warn
+ * when an allowlist entry carries no justification or detail for the VEX.
+ */
+function justificationReasons(vulns, policy) {
+  const unjustified = vulns.vulnerabilities.reduce((n, v) => n + acceptance(v, policy).unjustified, 0);
+  if (!unjustified) return [];
+  return [{
+    label: `${unjustified} accepted vulnerability(ies) without a justification — add "justification"/"detail" to the allowlist entry for the VEX`,
+    passed: true,
+    warning: true,
+  }];
 }
 
 function getProject(projectRoot, sections) {

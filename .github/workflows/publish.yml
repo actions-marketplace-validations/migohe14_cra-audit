@@ -66,3 +66,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --verify-tag --latest --title "$RELEASE_TITLE" --notes-file release-notes.md
+
+      # `uses: migohe14/cra-audit@v2` resolves to the latest 2.x release.
+      - name: Move the major version tag for the GitHub Action
+        run: |
+          MAJOR="${GITHUB_REF_NAME%%.*}"
+          git tag -f "$MAJOR" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$MAJOR"

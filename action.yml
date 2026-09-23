@@ -1,0 +1,109 @@
+name: 'CRA Audit'
+description: 'EU Cyber Resilience Act audit for npm/Yarn/pnpm: OSV + CISA KEV + malicious packages, TR-03183 SBOM, VEX and SARIF for code scanning.'
+author: 'Miguel Gonzalez'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  working-directory:
+    description: 'Directory of the project to audit (where package.json and the lockfile live).'
+    default: '.'
+  fail-on:
+    description: 'Minimum severity that fails the audit: info | low | moderate | high | critical.'
+    default: 'high'
+  fail-on-kev:
+    description: 'Fail when a dependency has an actively exploited (CISA KEV) vulnerability.'
+    default: 'true'
+  production:
+    description: 'Audit production dependencies only.'
+    default: 'false'
+  sarif:
+    description: 'Path of the SARIF report (relative to the workspace). Empty to skip.'
+    default: 'cra-audit.sarif'
+  upload-sarif:
+    description: 'Upload the SARIF report to GitHub code scanning (needs `security-events: write`).'
+    default: 'true'
+  sbom:
+    description: 'Also write a TR-03183 CycloneDX SBOM to this path (relative to the workspace). Empty to skip.'
+    default: ''
+  vex:
+    description: 'Also write a CycloneDX VEX document to this path (relative to the workspace). Empty to skip.'
+    default: ''
+  args:
+    description: 'Extra arguments for `cra-audit audit` (e.g. "--no-sbom --vuln-source npm").'
+    default: ''
+
+outputs:
+  exit-code:
+    description: 'Exit code of the audit: 0 passed, 1 failed.'
+    value: ${{ steps.audit.outputs.exit-code }}
+  sarif:
+    description: 'Path of the SARIF report.'
+    value: ${{ steps.audit.outputs.sarif }}
+  sbom:
+    description: 'Path of the SBOM, when requested.'
+    value: ${{ steps.audit.outputs.sbom }}
+  vex:
+    description: 'Path of the VEX document, when requested.'
+    value: ${{ steps.audit.outputs.vex }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run cra-audit
+      id: audit
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      # Inputs go through env, never interpolated into the script.
+      env:
+        CLI: ${{ github.action_path }}/bin/cra-audit.js
+        IN_FAIL_ON: ${{ inputs.fail-on }}
+        IN_FAIL_ON_KEV: ${{ inputs.fail-on-kev }}
+        IN_PRODUCTION: ${{ inputs.production }}
+        IN_SARIF: ${{ inputs.sarif }}
+        IN_SBOM: ${{ inputs.sbom }}
+        IN_VEX: ${{ inputs.vex }}
+        IN_ARGS: ${{ inputs.args }}
+      run: |
+        set +e
+        abs() { case "$1" in /*) echo "$1" ;; *) echo "$GITHUB_WORKSPACE/$1" ;; esac; }
+
+        args=(audit --fail-on "$IN_FAIL_ON")
+        [ "$IN_FAIL_ON_KEV" = "false" ] && args+=(--no-fail-on-kev)
+        [ "$IN_PRODUCTION" = "true" ] && args+=(--production)
+        if [ -n "$IN_SARIF" ]; then
+          args+=(--sarif "$(abs "$IN_SARIF")")
+          echo "sarif=$(abs "$IN_SARIF")" >> "$GITHUB_OUTPUT"
+        fi
+        # shellcheck disable=SC2206
+        [ -n "$IN_ARGS" ] && args+=($IN_ARGS)
+
+        node "$CLI" "${args[@]}"
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+
+        if [ -n "$IN_SBOM" ]; then
+          node "$CLI" sbom generate -o "$(abs "$IN_SBOM")" && echo "sbom=$(abs "$IN_SBOM")" >> "$GITHUB_OUTPUT"
+        fi
+        if [ -n "$IN_VEX" ]; then
+          node "$CLI" vex -o "$(abs "$IN_VEX")" && echo "vex=$(abs "$IN_VEX")" >> "$GITHUB_OUTPUT"
+        fi
+        exit 0
+
+    - name: Upload SARIF to code scanning
+      if: ${{ always() && inputs.upload-sarif == 'true' && steps.audit.outputs.sarif != '' }}
+      uses: github/codeql-action/upload-sarif@v3
+      continue-on-error: true
+      with:
+        sarif_file: ${{ steps.audit.outputs.sarif }}
+        category: cra-audit
+
+    - name: Fail when the audit failed
+      if: ${{ steps.audit.outputs.exit-code != '0' }}
+      shell: bash
+      env:
+        CODE: ${{ steps.audit.outputs.exit-code }}
+      run: |
+        echo "::error title=CRA audit failed::cra-audit exited with code ${CODE}. See the step log and the code scanning alerts."
+        exit 1

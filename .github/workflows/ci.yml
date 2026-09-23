@@ -27,3 +27,31 @@ jobs:
         run: |
           node bin/cra-audit.js --version
           node bin/cra-audit.js sbom generate --cwd test/fixtures/pnpm
+
+  action:
+    name: GitHub Action (self-test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The fixture has an undocumented license, so the audit is expected to fail.
+      - uses: ./
+        id: cra
+        continue-on-error: true
+        with:
+          working-directory: test/fixtures/demo-app
+          upload-sarif: 'false'
+          sbom: sbom.cdx.json
+          vex: vex.cdx.json
+          args: --no-sbom
+      - name: Check the action outputs
+        env:
+          EXIT_CODE: ${{ steps.cra.outputs.exit-code }}
+          SARIF: ${{ steps.cra.outputs.sarif }}
+          SBOM: ${{ steps.cra.outputs.sbom }}
+          VEX: ${{ steps.cra.outputs.vex }}
+        run: |
+          test "$EXIT_CODE" = "1"
+          check() { node -e "const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); if (!($2)) process.exit(1)" "$1"; }
+          check "$SARIF" "d.version === '2.1.0'"
+          check "$SBOM" "d.specVersion === '1.6'"
+          check "$VEX" "Array.isArray(d.vulnerabilities)"

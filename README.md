@@ -95,6 +95,62 @@ Generates an **interactive, self-contained HTML report** (no external CDNs, work
 
 The report includes summary cards, search, filters (vulnerable, outdated, license issues, at risk) and column sorting.
 
+### 6. VEX — documenting exploitability (`vex`)
+
+A known vulnerability in a dependency is not always exploitable in your product. Record your assessment in `.cra-audit.json` and `cra-audit` both **accepts** it in the audit and writes it to a **VEX** document (CycloneDX 1.6 or OpenVEX 0.2.0) — the place TR-03183-2 reserves for vulnerability data, outside the SBOM:
+
+```json
+{
+  "vulnerabilities": {
+    "allowlist": [
+      {
+        "id": "CVE-2020-11023",
+        "package": "jquery",
+        "status": "not_affected",
+        "justification": "code_not_reachable",
+        "detail": "We never pass untrusted HTML to jQuery DOM methods; content is rendered via textContent."
+      },
+      { "id": "GHSA-35jh-r3h4-6jhm", "status": "affected", "detail": "_.template used in the exporter; upgrade planned for 3.2.1." }
+    ]
+  }
+}
+```
+
+| `status` | Accepted by the audit | CycloneDX `analysis.state` | OpenVEX `status` |
+| --- | --- | --- | --- |
+| `not_affected` (default) | ✔ | `not_affected` | `not_affected` |
+| `false_positive` | ✔ | `false_positive` | `not_affected` |
+| `affected` | ✖ | `exploitable` | `affected` |
+| `under_investigation` | ✖ | `in_triage` | `under_investigation` |
+
+`justification` accepts the CycloneDX values (`code_not_present`, `code_not_reachable`, `requires_configuration`, `requires_dependency`, `requires_environment`, `protected_by_compiler`, `protected_at_runtime`, `protected_at_perimeter`, `protected_by_mitigating_control`) or the OpenVEX ones, and is translated for each format. Findings without an assessment are written as *in triage* / *under investigation*; malicious packages are always *exploitable* / *affected*. Accepting a vulnerability without `justification` or `detail` works, but the audit warns about it.
+
+```bash
+npx cra-audit vex -o vex.cdx.json                    # CycloneDX 1.6 VEX
+npx cra-audit vex --format openvex -o vex.openvex.json
+```
+
+### 7. CRA readiness (`readiness`)
+
+Checks the vulnerability-handling duties that live in the repository itself:
+
+| Check | Level | Reference |
+| --- | --- | --- |
+| `SECURITY.md` (root, `.github/` or `docs/`) | required | CRA Annex I Part II (5) |
+| Email address or reporting URL for vulnerabilities | required | Annex I Part II (6) · Annex II (2) |
+| Support period with an end date or duration | required | Art. 13(8) · Annex II (7) |
+| No unfilled `TODO` placeholders | required | Annex II |
+| `security.txt` `Contact` and a future `Expires` (when present) | required | RFC 9116 |
+| A lockfile to build the SBOM from | required | Annex I Part II (1) |
+| Supported versions, response times, Art. 14 process (CSIRT/ENISA), `security.txt`, `repository` link | recommended | Annex II · Art. 14 |
+
+```bash
+npx cra-audit readiness          # exit code 1 when a required check fails
+npx cra-audit readiness --init   # creates SECURITY.md and .well-known/security.txt templates (never overwrites)
+```
+
+`--init` prefills the templates from `package.json` (GitHub private vulnerability reporting link, supported major version, a coordinated disclosure process and the Art. 14 24 h / 72 h / 14 days reporting commitments); fill in the `TODO` placeholders and run it again.
+
 ---
 
 ## Usage
@@ -142,6 +198,8 @@ cra-audit --help
 | `cra-audit sbom check` | Validate the SBOM against the TR-03183-2 v2.1 data fields. |
 | `cra-audit vulnerabilities` (alias `vuln`) | Vulnerability analysis only. |
 | `cra-audit licenses` | License analysis only. |
+| `cra-audit vex` | Write a VEX document (CycloneDX, or `--format openvex`) from the policy assessments. |
+| `cra-audit readiness` | Check SECURITY.md, vulnerability contact, support period and security.txt (`--init` for templates). |
 | `cra-audit help` | Show help. |
 
 ## Options
@@ -161,6 +219,8 @@ cra-audit --help
 | `--production`, `--prod` | Audit production dependencies only. |
 | `--no-sbom` | Do not require an SBOM in the full audit. |
 | `--json` | Machine-readable JSON output. |
+| `--sarif <path>` | Also write the audit as SARIF 2.1.0 for GitHub code scanning. |
+| `--init` | With `readiness`: create SECURITY.md and security.txt templates. |
 | `--output`, `-o <path>` | Write the result / SBOM / HTML to a file. |
 | `--input`, `-i <path>` | Existing SBOM to validate (for `sbom check`). |
 | `--config`, `-c <path>` | Path to the security policy. |
@@ -234,7 +294,7 @@ Create a `.cra-audit.json` file at the project root to customize the rules (ther
 - `sbomFormat`: `cyclonedx` or `spdx`.
 - `sbomCreator`: email or URL of the entity that creates the SBOM (usually the manufacturer).
 - `productionOnly`: audit production dependencies only.
-- `vulnerabilities.allowlist`: package names or advisory ids (GHSA, CVE) accepted with documented justification, e.g. when the vulnerable code is not reachable in your product. Malicious packages (`MAL-*`) cannot be allowlisted.
+- `vulnerabilities.allowlist`: exploitability assessments (see [VEX](#6-vex--documenting-exploitability-vex)). Plain strings (a package name or a GHSA/CVE id) are still accepted. Malicious packages (`MAL-*`) cannot be allowlisted.
 - `licenses.allow` / `licenses.deny`: allowed / denied lists (SPDX id).
 - `licenses.failOnMissing`: treat undocumented licenses as a failure.
 
@@ -251,11 +311,53 @@ Command-line options take precedence over the policy file.
 
 Suitable for CI/CD: a non-`0` code blocks the pipeline.
 
+## GitHub Action
+
 ```yaml
-# Example in GitHub Actions
-- name: CRA compliance audit
-  run: npx cra-audit --fail-on high --production --json -o cra-report.json
+name: CRA audit
+on: [push, pull_request]
+
+permissions:
+  contents: read
+  security-events: write   # upload the SARIF report to code scanning
+
+jobs:
+  cra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci                # installed packages give the SBOM its creators/licenses
+      - uses: migohe14/cra-audit@v2
+        with:
+          fail-on: high
+          sbom: sbom.cdx.json
+          vex: vex.cdx.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cra-evidence
+          path: |
+            sbom.cdx.json
+            vex.cdx.json
+            cra-audit.sarif
 ```
+
+Every finding shows up in **Security → Code scanning**, pointing at the exact line of the lockfile; malicious packages and CISA KEV findings are errors, and advisories assessed as `not_affected` in the policy are shown as suppressed with their justification.
+
+| Input | Default | Description |
+| --- | --- | --- |
+| `working-directory` | `.` | Project to audit. |
+| `fail-on` | `high` | Minimum severity that fails the job. |
+| `fail-on-kev` | `true` | Fail on actively exploited (CISA KEV) vulnerabilities. |
+| `production` | `false` | Production dependencies only. |
+| `sarif` | `cra-audit.sarif` | SARIF path (empty to skip). |
+| `upload-sarif` | `true` | Upload to code scanning (needs `security-events: write`; private repos need GitHub Advanced Security). |
+| `sbom` / `vex` | — | Also write the SBOM / VEX to these paths. |
+| `args` | — | Extra `cra-audit audit` arguments. |
+
+Outputs: `exit-code`, `sarif`, `sbom`, `vex`. Without the action, `npx cra-audit --sarif cra-audit.sarif` does the same in any CI.
 
 ---
 

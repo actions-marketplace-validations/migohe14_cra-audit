@@ -4,6 +4,8 @@ const { logger, color } = require('./utils/logger');
 const { auditCommand } = require('./commands/audit');
 const { sbomCommand } = require('./commands/sbom');
 const { visualizeCommand } = require('./commands/visualize');
+const { vexCommand } = require('./commands/vex');
+const { readinessCommand } = require('./commands/readiness');
 
 const VERSION = require('../package.json').version;
 
@@ -20,7 +22,7 @@ const BOOLEAN_FLAGS = new Set([
   '--help', '--version', '--json', '--sbom', '--no-sbom',
   '--production', '--prod', '--no-color',
   '--visualize', '--offline', '--github', '--no-open',
-  '--fail-on-kev', '--no-fail-on-kev',
+  '--fail-on-kev', '--no-fail-on-kev', '--init', '--verbose',
 ]);
 
 /**
@@ -74,6 +76,13 @@ async function main(argv) {
     case 'licenses':
     case 'license':
       return auditCommand(flags, 'licenses');
+
+    case 'vex':
+      return vexCommand(flags);
+
+    case 'readiness':
+    case 'ready':
+      return readinessCommand(flags);
 
     case 'help':
       printHelp();
@@ -156,6 +165,9 @@ function setFlag(flags, name, value) {
     case '--vuln-source': flags.vulnSource = String(value).toLowerCase(); break;
     case '--fail-on-kev': flags.failOnKev = value; break;
     case '--no-fail-on-kev': flags.noFailOnKev = value; break;
+    case '--sarif': flags.sarif = value; break;
+    case '--init': flags.init = value; break;
+    case '--verbose': flags.verbose = value; break;
     default:
       // Unknown flag stored under its raw name for forward compatibility.
       flags[name.replace(/^--/, '')] = value;
@@ -178,6 +190,9 @@ ${c.bold('COMMANDS')}
   ${c.cyan('sbom check')}            Validate the SBOM against the TR-03183-2 v2.1 data fields.
   ${c.cyan('vulnerabilities')}       Known, actively exploited (KEV) and malicious packages only (alias: vuln).
   ${c.cyan('licenses')}              Analyze dependency licenses only.
+  ${c.cyan('vex')}                   Write a VEX document (CycloneDX or --format openvex) from the policy assessments.
+  ${c.cyan('readiness')}             Check SECURITY.md, vulnerability contact, support period and security.txt.
+                        --init creates SECURITY.md and security.txt templates.
   ${c.cyan('help')}                  Show this help.
 
 ${c.bold('OPTIONS')}
@@ -194,6 +209,7 @@ ${c.bold('OPTIONS')}
   ${c.cyan('--production, --prod')}  Audit production dependencies only (skips devDependencies).
   ${c.cyan('--no-sbom')}             Do not require an SBOM in the full audit.
   ${c.cyan('--json')}                Machine-readable JSON output.
+  ${c.cyan('--sarif <path>')}        Also write the audit as SARIF 2.1.0 (GitHub code scanning).
   ${c.cyan('--output, -o <path>')}   Write the result/SBOM/HTML to a file.
   ${c.cyan('--input, -i <path>')}    Existing SBOM to validate (for "sbom check").
   ${c.cyan('--config, -c <path>')}   Path to the security policy (.cra-audit.json).
@@ -216,6 +232,12 @@ ${c.bold('EXAMPLES')}
 
   ${c.gray('# Generate a CycloneDX SBOM on disk')}
   npx cra-audit sbom generate -o sbom.cdx.json
+
+  ${c.gray('# VEX with the exploitability assessments recorded in .cra-audit.json')}
+  npx cra-audit vex -o vex.cdx.json
+
+  ${c.gray('# Security policy, contact and support period checks')}
+  npx cra-audit readiness --init
 
   ${c.gray('# Fail only on critical vulnerabilities, in CI')}
   npx cra-audit --fail-on critical --production --json -o cra-report.json
