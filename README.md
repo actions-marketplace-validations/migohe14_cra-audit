@@ -1,5 +1,7 @@
 # cra-audit
 
+[![npm](https://img.shields.io/npm/v/cra-audit)](https://www.npmjs.com/package/cra-audit) [![CI](https://github.com/migohe14/cra-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/migohe14/cra-audit/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/cra-audit)](LICENSE)
+
 > Compliance audit for the **Cyber Resilience Act** (Regulation EU 2024/2847) and the **BSI TR-03183** technical guideline, for npm projects.
 
 `cra-audit` audits the installed dependencies of an npm project and checks the key requirements that the CRA imposes on "products with digital elements". It runs directly with `npx`, **without installation**, and has **no production dependencies** to minimize its own supply-chain surface.
@@ -24,7 +26,24 @@ Under the hood, the package runs the checks derived from the CRA legal obligatio
 
 ### 1. Automatic SBOM validation
 
-Generates and validates a **Software Bill of Materials (SBOM)** in a machine-readable format —**CycloneDX 1.5** or **SPDX 2.3**— from the `package-lock.json` / `npm-shrinkwrap.json`, `yarn.lock` or `pnpm-lock.yaml`. It verifies the **minimum elements** required by TR-03183 §6 for every component: name, version, unique identifier (`purl`), cryptographic integrity hash and license.
+Generates and validates a **Software Bill of Materials (SBOM)** in a machine-readable format —**CycloneDX 1.6** (default) or **SPDX 2.3**— from the `package-lock.json` / `npm-shrinkwrap.json`, `yarn.lock` or `pnpm-lock.yaml`, following the field mapping of **BSI TR-03183-2 v2.1.0**:
+
+| TR-03183-2 data field | Where it comes from | CycloneDX 1.6 field |
+| --- | --- | --- |
+| Creator of the SBOM (email or URL) | `--creator`, `sbomCreator` policy, or the project's `author` / `homepage` / `repository` | `metadata.manufacturer` |
+| Timestamp | generation time (UTC) | `metadata.timestamp` |
+| Component creator (email or URL) | installed `package.json`: `author`, `maintainers`, `homepage`, `repository` | `components[].manufacturer` |
+| Name, version, purl | lockfile | `name`, `version`, `purl` |
+| Filename | tarball name (`left-pad-1.3.0.tgz`) | property `bsi:component:filename` |
+| SHA-512 of the deployable component | lockfile `integrity` | `externalReferences[distribution].hashes` |
+| Executable / archive / structured | npm tarball: `non-executable`, `archive`, `structured` | properties `bsi:component:*` |
+| Dependencies + completeness | lockfile dependency graph (npm v1–v3, Yarn classic/Berry, pnpm v5–v9) | `dependencies`, `compositions[].aggregate` |
+| Distribution / original licences | lockfile or installed `package.json` | `licenses[]` with `acknowledgement` `concluded` / `declared` |
+| Source code URI | `repository` | `externalReferences[source-distribution]` |
+
+`sbom check` verifies every one of those fields for every component. Licenses (for Yarn/pnpm) and component creators are read from `node_modules`, so **run it after installing dependencies** (e.g. after `npm ci` in CI).
+
+Known limits: Yarn Berry lockfiles only store Yarn's own cache checksum, not the npm tarball SHA-512, so Berry projects fail the hash check. TR-03183-2 v2.1 requires **SPDX ≥ 3.0.1**; the SPDX output is still 2.3, so use CycloneDX for a conforming SBOM.
 
 > CRA Annex I · TR-03183 Part 2 — *"Transparency through SBOM"*.
 
@@ -44,7 +63,7 @@ Identifies every third-party open-source library present in the dependency tree 
 
 Verifies that **all** dependencies have their license documented and compliant with the policy (allowlist / denylist), and that they carry unique identifiers (`purl`) and integrity hashes (SHA-512/384/256) as recommended by TR-03183.
 
-> TR-03183 §6 — license governance and hash integrity.
+> TR-03183-2 §5.2 — license governance and hash integrity.
 
 ### 5. Visualization (`--visualize`)
 
@@ -102,7 +121,7 @@ cra-audit --help
 | `cra-audit` / `cra-audit audit` | Full CRA compliance audit (vulnerabilities + SBOM + licenses). **Default.** |
 | `cra-audit visualize` (aliases `view`, `report`) | Interactive HTML report with SBOM, licenses, versions and maintenance. |
 | `cra-audit sbom generate` | Generate an SBOM (CycloneDX/SPDX). |
-| `cra-audit sbom check` | Validate the SBOM against the TR-03183 minimum elements. |
+| `cra-audit sbom check` | Validate the SBOM against the TR-03183-2 v2.1 data fields. |
 | `cra-audit vulnerabilities` (alias `vuln`) | Vulnerability analysis only. |
 | `cra-audit licenses` | License analysis only. |
 | `cra-audit help` | Show help. |
@@ -117,6 +136,7 @@ cra-audit --help
 | `--no-open` | Do not open the HTML report in the browser automatically. |
 | `--sbom` | Shortcut equivalent to `sbom check`. |
 | `--format <fmt>` | SBOM format: `cyclonedx` (default) or `spdx`. |
+| `--creator <contact>` | Email or URL of the SBOM creator (TR-03183-2 §5.2.1). Defaults to the project's `package.json` `author` / `homepage` / `repository`. |
 | `--fail-on <sev>` | Minimum severity that fails the audit: `info`, `low`, `moderate`, `high`, `critical`. |
 | `--production`, `--prod` | Audit production dependencies only. |
 | `--no-sbom` | Do not require an SBOM in the full audit. |
@@ -172,6 +192,7 @@ Create a `.cra-audit.json` file at the project root to customize the rules (ther
   "failOn": "high",
   "requireSbom": true,
   "sbomFormat": "cyclonedx",
+  "sbomCreator": "security@example.com",
   "productionOnly": false,
   "vulnerabilities": {
     "allowlist": []
@@ -185,8 +206,9 @@ Create a `.cra-audit.json` file at the project root to customize the rules (ther
 ```
 
 - `failOn`: minimum severity that blocks the audit.
-- `requireSbom`: require the SBOM to meet the TR-03183 minimum elements.
+- `requireSbom`: require the SBOM to meet the TR-03183-2 required data fields.
 - `sbomFormat`: `cyclonedx` or `spdx`.
+- `sbomCreator`: email or URL of the entity that creates the SBOM (usually the manufacturer).
 - `productionOnly`: audit production dependencies only.
 - `vulnerabilities.allowlist`: advisory/CVE identifiers accepted with documented justification.
 - `licenses.allow` / `licenses.deny`: allowed / denied lists (SPDX id).

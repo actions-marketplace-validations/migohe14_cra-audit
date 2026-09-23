@@ -151,6 +151,7 @@ function setFlag(flags, name, value) {
     case '--format': flags.format = String(value).toLowerCase(); break;
     case '--fail-on': flags.failOn = String(value).toLowerCase(); break;
     case '--cwd': flags.cwd = value; break;
+    case '--creator': flags.creator = value; break;
     default:
       // Unknown flag stored under its raw name for forward compatibility.
       flags[name.replace(/^--/, '')] = value;
@@ -170,7 +171,7 @@ ${c.bold('COMMANDS')}
   ${c.cyan('audit')}                 Run ALL the checks (vulnerabilities + SBOM + licenses). Default.
   ${c.cyan('visualize')}             Generate an interactive HTML report (SBOM, licenses, versions and maintenance).
   ${c.cyan('sbom generate')}         Generate an SBOM (CycloneDX or SPDX) and print or save it.
-  ${c.cyan('sbom check')}            Validate that the SBOM meets the TR-03183 minimum elements.
+  ${c.cyan('sbom check')}            Validate the SBOM against the TR-03183-2 v2.1 data fields.
   ${c.cyan('vulnerabilities')}       Analyze known vulnerabilities only (alias: vuln).
   ${c.cyan('licenses')}              Analyze dependency licenses only.
   ${c.cyan('help')}                  Show this help.
@@ -182,6 +183,7 @@ ${c.bold('OPTIONS')}
   ${c.cyan('--no-open')}             Do not open the HTML report in the browser automatically.
   ${c.cyan('--sbom')}                Shortcut equivalent to "sbom check".
   ${c.cyan('--format <fmt>')}        SBOM format: cyclonedx (default) | spdx.
+  ${c.cyan('--creator <contact>')}   Email or URL of the SBOM creator (default: package.json author/homepage).
   ${c.cyan('--fail-on <sev>')}       Minimum severity that fails the audit: info|low|moderate|high|critical.
   ${c.cyan('--production, --prod')}  Audit production dependencies only (skips devDependencies).
   ${c.cyan('--no-sbom')}             Do not require an SBOM in the full audit.

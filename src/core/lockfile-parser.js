@@ -29,10 +29,17 @@ const LOCKFILES = [
  *   manager: 'npm'|'yarn'|'pnpm'|null,
  *   lockfileName: string|null,
  *   lockfileVersion: number|string|null,
- *   root: { name: string, version: string },
+ *   root: { name: string, version: string, dependsOn: string[] },
  *   components: Array<object>,
+ *   dependencyGraphComplete: boolean,
  *   error?: string
  * }}
+ *
+ * Every component carries `dependsOn`: the `name@version` keys of the
+ * components it directly depends on (TR-03183 §5.2.2 "Dependencies on other
+ * components"). `root.dependsOn` lists the project's direct dependencies.
+ * `dependencyGraphComplete` is false when a required dependency could not be
+ * resolved in the lockfile, so the SBOM can declare the graph as incomplete.
  */
 function parseLockfile(projectRoot) {
   let lockPath = null;
@@ -54,6 +61,7 @@ function parseLockfile(projectRoot) {
   const root = {
     name: rootPkg.name || path.basename(projectRoot),
     version: rootPkg.version || '0.0.0',
+    dependsOn: [],
   };
 
   if (!lockPath) {
@@ -64,6 +72,7 @@ function parseLockfile(projectRoot) {
       lockfileVersion: null,
       root,
       components: [],
+      dependencyGraphComplete: false,
       error:
         'No lockfile found (package-lock.json, npm-shrinkwrap.json, ' +
         'yarn.lock or pnpm-lock.yaml). The CRA requires deterministic dependency ' +
@@ -72,9 +81,21 @@ function parseLockfile(projectRoot) {
   }
 
   try {
-    if (manager === 'npm') return parseNpmLock(lockPath, lockfileName, root);
-    if (manager === 'yarn') return parseYarnLock(lockPath, lockfileName, root);
-    if (manager === 'pnpm') return parsePnpmLock(lockPath, lockfileName, root);
+    let result = null;
+    if (manager === 'npm') result = parseNpmLock(lockPath, rootPkg);
+    else if (manager === 'yarn') result = parseYarnLock(lockPath, rootPkg);
+    else if (manager === 'pnpm') result = parsePnpmLock(lockPath);
+
+    root.dependsOn = uniqueSorted(result.rootDependsOn);
+    return {
+      ok: true,
+      manager,
+      lockfileName,
+      lockfileVersion: result.lockfileVersion,
+      root,
+      components: dedupe(result.components),
+      dependencyGraphComplete: result.complete,
+    };
   } catch (err) {
     return {
       ok: false,
@@ -83,33 +104,72 @@ function parseLockfile(projectRoot) {
       lockfileVersion: null,
       root,
       components: [],
+      dependencyGraphComplete: false,
       error: `Could not parse ${lockfileName}: ${err.message}`,
     };
   }
-
-  return { ok: true, manager, lockfileName, lockfileVersion: null, root, components: [] };
 }
 
+/**
+ * Marker returned by resolvers for dependencies that point to a local
+ * workspace/link: they are first-party code, not an unresolved dependency.
+ */
+const LINK = Symbol('link');
+
 /** npm: package-lock.json (v1/v2/v3) or npm-shrinkwrap.json. */
-function parseNpmLock(lockPath, lockfileName, root) {
+function parseNpmLock(lockPath, rootPkg) {
   const lock = readJson(lockPath);
   const lockfileVersion = lock.lockfileVersion || 1;
 
-  let components;
   if (lock.packages) {
-    components = parsePackagesField(lock.packages);
-  } else if (lock.dependencies) {
-    components = parseDependenciesField(lock.dependencies);
-  } else {
-    components = [];
+    return { lockfileVersion, ...parsePackagesField(lock.packages) };
   }
-
-  return { ok: true, manager: 'npm', lockfileName, lockfileVersion, root, components };
+  if (lock.dependencies) {
+    return { lockfileVersion, ...parseDependenciesField(lock.dependencies, rootPkg) };
+  }
+  return { lockfileVersion, components: [], rootDependsOn: [], complete: true };
 }
 
 /** Lockfile v2/v3 store everything under the `packages` map keyed by path. */
 function parsePackagesField(packages) {
   const components = [];
+  let complete = true;
+
+  // Node's module resolution: look in `<from>/node_modules/<dep>`, then walk
+  // up through every enclosing node_modules folder until the project root.
+  const resolve = (fromPath, depName) => {
+    let base = fromPath;
+    for (;;) {
+      const info = packages[`${base ? `${base}/` : ''}node_modules/${depName}`];
+      if (info) {
+        if (info.link) return LINK;
+        return componentKey(info.name || depName, info.version);
+      }
+      if (!base) return null;
+      const idx = base.lastIndexOf('/node_modules/');
+      base = idx === -1 ? '' : base.slice(0, idx);
+    }
+  };
+
+  const edges = (fromPath, info, includeDev) => {
+    const optional = new Set([
+      ...Object.keys(info.optionalDependencies || {}),
+      ...Object.keys(info.peerDependencies || {}),
+    ]);
+    const names = new Set([
+      ...Object.keys(info.dependencies || {}),
+      ...optional,
+      ...(includeDev ? Object.keys(info.devDependencies || {}) : []),
+    ]);
+    const dependsOn = [];
+    for (const depName of names) {
+      const ref = resolve(fromPath, depName);
+      if (ref === LINK) continue;
+      if (ref) dependsOn.push(ref);
+      else if (!optional.has(depName)) complete = false;
+    }
+    return dependsOn;
+  };
 
   for (const [pkgPath, info] of Object.entries(packages)) {
     // The root project is stored under the empty key.
@@ -128,30 +188,81 @@ function parsePackagesField(packages) {
       dev: Boolean(info.dev),
       optional: Boolean(info.optional),
       path: pkgPath,
+      dependsOn: edges(pkgPath, info, false),
     }));
   }
 
-  return dedupe(components);
+  const rootDependsOn = packages[''] ? edges('', packages[''], true) : [];
+  return { components, rootDependsOn, complete };
 }
 
-/** Lockfile v1 nests dependencies recursively under `dependencies`. */
-function parseDependenciesField(dependencies, acc = []) {
-  for (const [name, info] of Object.entries(dependencies)) {
-    acc.push(normalizeComponent({
-      name,
-      version: info.version,
-      resolved: info.resolved,
-      integrity: info.integrity,
-      license: info.license,
-      dev: Boolean(info.dev),
-      optional: Boolean(info.optional),
-      path: `node_modules/${name}`,
-    }));
-    if (info.dependencies) {
-      parseDependenciesField(info.dependencies, acc);
+/**
+ * Lockfile v1 nests dependencies recursively under `dependencies`; each entry
+ * lists what it needs under `requires`, resolved against the nearest scope.
+ */
+function parseDependenciesField(dependencies, rootPkg) {
+  const components = [];
+  let complete = true;
+
+  const lookup = (scopes, name) => {
+    for (const scope of scopes) {
+      if (scope[name]) return scope[name];
     }
+    return null;
+  };
+
+  const walk = (deps, outerScopes, prefix) => {
+    const scopes = [deps, ...outerScopes];
+    for (const [name, info] of Object.entries(deps)) {
+      const ownScopes = info.dependencies ? [info.dependencies, ...scopes] : scopes;
+      const dependsOn = [];
+      for (const req of Object.keys(info.requires || {})) {
+        const found = lookup(ownScopes, req);
+        if (found) dependsOn.push(componentKey(req, found.version));
+        else complete = false;
+      }
+
+      const pkgPath = `${prefix}node_modules/${name}`;
+      components.push(normalizeComponent({
+        name,
+        version: info.version,
+        resolved: info.resolved,
+        integrity: info.integrity,
+        license: info.license,
+        dev: Boolean(info.dev),
+        optional: Boolean(info.optional),
+        path: pkgPath,
+        dependsOn,
+      }));
+      if (info.dependencies) walk(info.dependencies, scopes, `${pkgPath}/`);
+    }
+  };
+  walk(dependencies, [], '');
+
+  const rootDependsOn = [];
+  for (const { name, optional } of rootDependencies(rootPkg)) {
+    const found = dependencies[name];
+    if (found) rootDependsOn.push(componentKey(name, found.version));
+    else if (!optional) complete = false;
   }
-  return dedupe(acc);
+  return { components, rootDependsOn, complete };
+}
+
+/**
+ * Direct dependencies declared in the project's package.json, including
+ * dev and optional ones, with the range each was requested with.
+ */
+function rootDependencies(rootPkg) {
+  const list = [];
+  const add = (map, optional) => {
+    for (const [name, range] of Object.entries(map || {})) {
+      list.push({ name, range: String(range), optional });
+    }
+  };
+  add(rootPkg.dependencies, false);
+  add(rootPkg.devDependencies, false);
+  add(rootPkg.optionalDependencies, true);
+  return list;
 }
 
 function nameFromPath(pkgPath) {
@@ -163,18 +274,52 @@ function nameFromPath(pkgPath) {
 // --- Yarn ------------------------------------------------------------------
 
 /** Yarn: dispatches between the classic v1 text format and Berry's YAML. */
-function parseYarnLock(lockPath, lockfileName, root) {
+function parseYarnLock(lockPath, rootPkg) {
   const content = fs.readFileSync(lockPath, 'utf8');
   const isBerry = /^__metadata:/m.test(content) || /\n {2}resolution:/.test(content);
-  const components = isBerry ? parseYarnBerry(content) : parseYarnClassic(content);
-  return {
-    ok: true,
-    manager: 'yarn',
-    lockfileName,
-    lockfileVersion: isBerry ? 'berry' : 1,
-    root,
-    components: dedupe(components),
+  const entries = isBerry ? parseYarnBerry(content) : parseYarnClassic(content);
+
+  // Both formats key entries by the `name@range` descriptors that resolved
+  // to them, so edges are resolved by looking descriptors up.
+  const byDescriptor = new Map();
+  for (const entry of entries) {
+    for (const descriptor of entry.descriptors) {
+      byDescriptor.set(descriptor, entry.workspace ? LINK : componentKey(entry.name, entry.version));
+    }
+  }
+
+  let complete = true;
+  const resolve = (name, range, optional) => {
+    const ref = byDescriptor.get(`${name}@${range}`) ||
+      (!range.includes(':') ? byDescriptor.get(`${name}@npm:${range}`) : undefined);
+    if (ref === LINK) return null;
+    if (ref) return ref;
+    // Local protocols never appear as third-party lockfile entries.
+    if (!optional && !/^(workspace|link|portal|file):/.test(range)) complete = false;
+    return null;
   };
+
+  const components = [];
+  for (const entry of entries) {
+    if (entry.workspace) continue; // first-party workspace, not a third-party component
+    const dependsOn = entry.dependencies
+      .map((d) => resolve(d.name, d.range, d.optional))
+      .filter(Boolean);
+    components.push(normalizeComponent({
+      name: entry.name,
+      version: entry.version,
+      resolved: entry.resolved,
+      integrity: entry.integrity,
+      path: `node_modules/${entry.name}`,
+      dependsOn,
+    }));
+  }
+
+  const rootDependsOn = rootDependencies(rootPkg)
+    .map((d) => resolve(d.name, d.range, d.optional))
+    .filter(Boolean);
+
+  return { lockfileVersion: isBerry ? 'berry' : 1, components, rootDependsOn, complete };
 }
 
 /**
@@ -182,7 +327,7 @@ function parseYarnLock(lockPath, lockfileName, root) {
  * resolved entry whose header lists one or more `name@range` descriptors.
  */
 function parseYarnClassic(content) {
-  const components = [];
+  const entries = [];
   const blocks = content.split(/\r?\n(?=\S)/);
 
   for (const block of blocks) {
@@ -197,51 +342,106 @@ function parseYarnClassic(content) {
     let version = null;
     let resolved = null;
     let integrity = null;
+    let section = null;
+    const dependencies = [];
     for (const raw of lines.slice(1)) {
       const line = raw.trim();
-      if (line.startsWith('version ')) version = stripQuotes(line.slice('version '.length).trim());
-      else if (line.startsWith('resolved ')) resolved = stripQuotes(line.slice('resolved '.length).trim());
-      else if (line.startsWith('integrity ')) integrity = stripQuotes(line.slice('integrity '.length).trim());
+      const indent = raw.length - raw.trimStart().length;
+      if (indent <= 2) {
+        section = /^(dependencies|optionalDependencies):$/.test(line) ? line.slice(0, -1) : null;
+        if (line.startsWith('version ')) version = stripQuotes(line.slice('version '.length).trim());
+        else if (line.startsWith('resolved ')) resolved = stripQuotes(line.slice('resolved '.length).trim());
+        else if (line.startsWith('integrity ')) integrity = stripQuotes(line.slice('integrity '.length).trim());
+      } else if (section) {
+        // `name "range"`, `"@scope/name" "range"` or `name range`.
+        const m = line.match(/^(?:"([^"]+)"|(\S+))\s+(?:"([^"]*)"|(\S+))$/);
+        if (m) {
+          dependencies.push({
+            name: m[1] || m[2],
+            range: m[3] !== undefined ? m[3] : m[4],
+            optional: section === 'optionalDependencies',
+          });
+        }
+      }
     }
     if (!version) continue;
 
-    components.push(normalizeComponent({ name, version, resolved, integrity, path: `node_modules/${name}` }));
+    entries.push({ descriptors, name, version, resolved, integrity, dependencies, workspace: false });
   }
-  return components;
+  return entries;
 }
 
 /** Yarn Berry (v2+) lockfiles are YAML keyed by descriptor lists. */
 function parseYarnBerry(content) {
   const doc = parseYaml(content) || {};
-  const components = [];
+  const entries = [];
 
   for (const [key, info] of Object.entries(doc)) {
     if (key === '__metadata' || !info || typeof info !== 'object') continue;
     if (!info.version) continue;
 
+    const descriptors = String(key).split(',').map((d) => stripQuotes(d.trim())).filter(Boolean);
     const resolution = typeof info.resolution === 'string' ? info.resolution : '';
-    const name = packageNameFromDescriptor(resolution || String(key).split(',')[0].trim());
+    const name = packageNameFromDescriptor(resolution || descriptors[0]);
     if (!name) continue;
 
-    components.push(normalizeComponent({
+    const optionalMeta = info.dependenciesMeta && typeof info.dependenciesMeta === 'object' ? info.dependenciesMeta : {};
+    const dependencies = Object.entries(info.dependencies || {}).map(([depName, range]) => ({
+      name: depName,
+      range: String(range),
+      optional: Boolean(optionalMeta[depName] && optionalMeta[depName].optional),
+    }));
+    for (const [depName, range] of Object.entries(info.optionalDependencies || {})) {
+      dependencies.push({ name: depName, range: String(range), optional: true });
+    }
+
+    entries.push({
+      descriptors,
       name,
-      version: info.version,
+      version: String(info.version),
+      resolved: null,
       // Berry's `checksum` is a cache key, not an npm SRI hash, so we omit it.
       integrity: null,
-      path: `node_modules/${name}`,
-    }));
+      dependencies,
+      workspace: /@workspace:/.test(resolution),
+    });
   }
-  return components;
+  return entries;
 }
 
 // --- pnpm ------------------------------------------------------------------
 
 /** pnpm: `pnpm-lock.yaml` (lockfileVersion 5.x / 6.x / 9.x). */
-function parsePnpmLock(lockPath, lockfileName, root) {
+function parsePnpmLock(lockPath) {
   const doc = parseYaml(fs.readFileSync(lockPath, 'utf8')) || {};
   const packages = doc.packages && typeof doc.packages === 'object' ? doc.packages : {};
-  const components = [];
+  // v9 moved the dependency edges from `packages` to `snapshots`.
+  const snapshots = doc.snapshots && typeof doc.snapshots === 'object' ? doc.snapshots : packages;
 
+  let complete = true;
+  const edges = (info) => {
+    const dependsOn = [];
+    if (!info || typeof info !== 'object') return dependsOn;
+    for (const [group, optional] of [['dependencies', false], ['devDependencies', false], ['optionalDependencies', true]]) {
+      for (const [depName, value] of Object.entries(info[group] || {})) {
+        const ref = pnpmDependencyRef(depName, value);
+        if (ref === LINK) continue;
+        if (ref) dependsOn.push(ref);
+        else if (!optional) complete = false;
+      }
+    }
+    return dependsOn;
+  };
+
+  const edgesByKey = new Map();
+  for (const [key, info] of Object.entries(snapshots)) {
+    const parsed = packageKeyToNameVersion(key);
+    if (!parsed) continue;
+    const ref = componentKey(parsed.name, parsed.version);
+    edgesByKey.set(ref, [...(edgesByKey.get(ref) || []), ...edges(info)]);
+  }
+
+  const components = [];
   for (const [key, info] of Object.entries(packages)) {
     const parsed = packageKeyToNameVersion(key);
     if (!parsed) continue;
@@ -252,17 +452,37 @@ function parsePnpmLock(lockPath, lockfileName, root) {
       version: parsed.version,
       integrity,
       path: `node_modules/${parsed.name}`,
+      dependsOn: edgesByKey.get(componentKey(parsed.name, parsed.version)) || [],
     }));
   }
 
-  return {
-    ok: true,
-    manager: 'pnpm',
-    lockfileName,
-    lockfileVersion: doc.lockfileVersion || null,
-    root,
-    components: dedupe(components),
-  };
+  // Root edges: `importers['.']` (workspaces, and every project since v9) or
+  // the top-level maps of older single-project lockfiles.
+  const rootImporter = doc.importers && doc.importers['.'] ? doc.importers['.'] : doc;
+  const rootDependsOn = edges(rootImporter);
+
+  return { lockfileVersion: doc.lockfileVersion || null, components, rootDependsOn, complete };
+}
+
+/**
+ * Resolves one pnpm dependency value to a component key. Values are a version
+ * (`1.3.0`), a version with a peer suffix (`1.3.0(react@18.0.0)` or v5's
+ * `1.3.0_react@18.0.0`), an alias (`npm:other@1.0.0`, `/other@1.0.0`), an
+ * importer object `{ specifier, version }`, or a local `link:`.
+ */
+function pnpmDependencyRef(depName, value) {
+  let v = value && typeof value === 'object' ? value.version : value;
+  if (v === undefined || v === null) return null;
+  v = String(v);
+  if (/^(link|file|workspace):/.test(v)) return LINK;
+
+  v = v.replace(/^npm:/, '').split('(')[0];
+  if (/^\d/.test(v)) {
+    // Plain version; drop v5's `_peer@x` suffix (semver never contains `_`).
+    return componentKey(depName, v.split('_')[0]);
+  }
+  const aliased = packageKeyToNameVersion(v);
+  return aliased ? componentKey(aliased.name, aliased.version) : null;
 }
 
 /**
@@ -292,6 +512,8 @@ function packageKeyToNameVersion(key) {
 
   if (k.startsWith('/')) {
     k = k.slice(1);
+    // v5 appends peers after an underscore: `/name/1.0.0_react@18.0.0`.
+    if (/^(@[^/]+\/)?[^/@]+\/\d/.test(k)) k = k.replace(/_[^/]*$/, '');
     // v5 uses `/` as separator: name/version (scoped: @scope/name/version).
     if (!k.includes('@', k.startsWith('@') ? 1 : 0) && k.includes('/')) {
       const idx = k.lastIndexOf('/');
@@ -333,7 +555,17 @@ function normalizeComponent(raw) {
     dev: Boolean(raw.dev),
     optional: Boolean(raw.optional),
     path: raw.path,
+    dependsOn: uniqueSorted(raw.dependsOn),
   };
+}
+
+/** Stable identity of a component across the graph: `name@version`. */
+function componentKey(name, version) {
+  return `${name}@${version}`;
+}
+
+function uniqueSorted(list) {
+  return [...new Set(list || [])].sort();
 }
 
 /**
@@ -357,6 +589,9 @@ function parseIntegrity(integrity) {
   } catch {
     hex = null;
   }
+  // A digest of the wrong length is corrupt: better no hash than a bogus one.
+  const expectedHexLength = { 'SHA-512': 128, 'SHA-384': 96, 'SHA-256': 64, 'SHA-1': 40 }[algorithm];
+  if (!hex || hex.length !== expectedHexLength) return { algorithm: null, hash: null };
   return { algorithm, hash: hex };
 }
 
@@ -377,9 +612,13 @@ function buildPurl(name, version) {
 function dedupe(components) {
   const seen = new Map();
   for (const comp of components) {
-    const key = `${comp.name}@${comp.version}`;
-    if (!seen.has(key)) {
+    const key = componentKey(comp.name, comp.version);
+    const existing = seen.get(key);
+    if (!existing) {
       seen.set(key, comp);
+    } else {
+      // The same name@version installed at several paths: merge its edges.
+      existing.dependsOn = uniqueSorted([...existing.dependsOn, ...comp.dependsOn]);
     }
   }
   return Array.from(seen.values()).sort((a, b) =>
@@ -436,4 +675,4 @@ function toNpmLockfile(parsed) {
   };
 }
 
-module.exports = { parseLockfile, buildPurl, parseIntegrity, toNpmLockfile };
+module.exports = { parseLockfile, buildPurl, parseIntegrity, toNpmLockfile, componentKey };

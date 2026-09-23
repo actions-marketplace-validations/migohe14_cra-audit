@@ -15,6 +15,9 @@ const DEFAULT_POLICY = {
   // Require an SBOM that satisfies the minimum TR-03183 elements.
   requireSbom: true,
   sbomFormat: 'cyclonedx', // cyclonedx | spdx
+  // Email or URL of the SBOM creator (TR-03183-2 §5.2.1). Defaults to the
+  // project's package.json author, homepage or repository.
+  sbomCreator: null,
   // Audit only production dependencies (recommended for shipped products).
   productionOnly: false,
   vulnerabilities: {

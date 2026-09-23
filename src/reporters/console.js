@@ -83,7 +83,7 @@ function renderSbom(section) {
       logger.log(`  ${mark} ${check.label}`);
     }
     if (v.valid) {
-      logger.success('The SBOM meets the TR-03183 §6 minimum elements.');
+      logger.success('The SBOM meets the TR-03183-2 required data fields.');
     } else {
       logger.warn(`The SBOM does not meet ${v.failedChecks.length} minimum requirement(s).`);
     }
@@ -94,7 +94,7 @@ function renderSbom(section) {
 }
 
 function renderLicenses(section) {
-  logger.heading('3) Third-party component licenses (TR-03183 §6)');
+  logger.heading('3) Third-party component licenses (TR-03183-2 §5.2)');
   if (!section.ok) {
     logger.error(section.error);
     return;

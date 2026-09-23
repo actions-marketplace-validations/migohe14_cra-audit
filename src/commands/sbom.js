@@ -5,13 +5,14 @@ const { findProjectRoot, readJson, writeJson, exists } = require('../utils/fs');
 const { logger, color } = require('../utils/logger');
 const { generateSbom } = require('../core/sbom-generator');
 const { validateSbom } = require('../core/sbom-validator');
+const { loadPolicy } = require('../core/policy');
 
 /**
  * `cra-audit sbom <generate|check>` and the `--sbom` shortcut.
  *
  * - generate: builds a CycloneDX/SPDX SBOM and prints it or writes it to disk.
- * - check:    generates (or reads) an SBOM and validates the minimum elements
- *             required by BSI TR-03183 §6.
+ * - check:    generates (or reads) an SBOM and validates the data fields
+ *             required by BSI TR-03183-2 v2.1.0 §5.2.
  */
 function sbomCommand(subcommand, flags) {
   const projectRoot = findProjectRoot(flags.cwd || process.cwd());
@@ -35,7 +36,7 @@ function sbomCommand(subcommand, flags) {
 }
 
 function sbomGenerate(projectRoot, format, flags) {
-  const result = generateSbom(projectRoot, { format });
+  const result = generateSbom(projectRoot, { format, creator: sbomCreator(projectRoot, flags) });
   if (!result.ok) {
     logger.error(result.error);
     return 1;
@@ -63,7 +64,7 @@ function sbomCheck(projectRoot, format, flags) {
     }
     document = readJson(inPath);
   } else {
-    const result = generateSbom(projectRoot, { format });
+    const result = generateSbom(projectRoot, { format, creator: sbomCreator(projectRoot, flags) });
     if (!result.ok) {
       logger.error(result.error);
       return 1;
@@ -82,7 +83,7 @@ function sbomCheck(projectRoot, format, flags) {
     return validation.valid ? 0 : 1;
   }
 
-  logger.heading('SBOM validation · BSI TR-03183 §6 (minimum elements)');
+  logger.heading('SBOM validation · BSI TR-03183-2 v2.1.0 (required data fields)');
   logger.detail(`Detected format: ${validation.format} · Components: ${validation.stats.total}`);
   for (const check of validation.checks) {
     const mark = check.passed ? color.green('✔') : color.red('✖');
@@ -90,11 +91,21 @@ function sbomCheck(projectRoot, format, flags) {
   }
   logger.log('');
   if (validation.valid) {
-    logger.success(color.bold('SBOM VALID — meets the minimum elements required by the CRA.'));
+    logger.success(color.bold('SBOM VALID — meets the TR-03183-2 data fields required by the CRA.'));
     return 0;
   }
   logger.error(color.bold(`SBOM INVALID — ${validation.failedChecks.length} requirement(s) not met.`));
   return 1;
+}
+
+/** SBOM creator from --creator, else from the project policy (`sbomCreator`). */
+function sbomCreator(projectRoot, flags) {
+  if (typeof flags.creator === 'string') return flags.creator;
+  try {
+    return loadPolicy(projectRoot, flags.config).policy.sbomCreator;
+  } catch {
+    return undefined; // A broken policy file must not block SBOM generation.
+  }
 }
 
 module.exports = { sbomCommand };

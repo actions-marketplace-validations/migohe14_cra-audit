@@ -48,7 +48,7 @@ function runAudit(projectRoot, policy, policySource, options = {}) {
 
   // --- 2. SBOM ------------------------------------------------------------
   if (!only || only === 'sbom') {
-    const sbom = generateSbom(projectRoot, { format: policy.sbomFormat });
+    const sbom = generateSbom(projectRoot, { format: policy.sbomFormat, creator: policy.sbomCreator });
     if (sbom.ok) {
       sbom.validation = validateSbom(sbom.document);
     }
@@ -60,7 +60,7 @@ function runAudit(projectRoot, policy, policySource, options = {}) {
       } else {
         reasons.push({
           label: sbom.validation.valid
-            ? 'SBOM valid against the TR-03183 minimum elements'
+            ? 'SBOM valid against the TR-03183-2 required data fields'
             : 'SBOM incomplete with respect to TR-03183',
           passed: sbom.validation.valid,
         });

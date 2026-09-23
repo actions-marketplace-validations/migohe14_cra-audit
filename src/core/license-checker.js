@@ -1,9 +1,7 @@
 'use strict';
 
-const fs = require('node:fs');
-const path = require('node:path');
-const { readJson } = require('../utils/fs');
 const { parseLockfile } = require('./lockfile-parser');
+const { readInstalledManifest, licenseFromManifest } = require('./installed-metadata');
 
 /**
  * Resolves and evaluates the license of every third-party component.
@@ -22,7 +20,7 @@ function checkLicenses(projectRoot, policy = {}) {
   const deny = normalizeList(policy.deny);
 
   const components = parsed.components.map((c) => {
-    const license = c.license || readLicenseFromDisk(projectRoot, c.path, c.name);
+    const license = c.license || licenseFromManifest(readInstalledManifest(projectRoot, c));
     const normalized = license ? String(license) : null;
     const status = classify(normalized, allow, deny);
     return {
@@ -42,29 +40,6 @@ function checkLicenses(projectRoot, policy = {}) {
   };
 
   return { ok: true, components, summary };
-}
-
-/** Reads the `license` field from an installed package's package.json. */
-function readLicenseFromDisk(projectRoot, pkgPath, name) {
-  const candidates = [];
-  if (pkgPath) candidates.push(path.join(projectRoot, pkgPath, 'package.json'));
-  candidates.push(path.join(projectRoot, 'node_modules', name, 'package.json'));
-
-  for (const candidate of candidates) {
-    try {
-      if (!fs.existsSync(candidate)) continue;
-      const pkg = readJson(candidate);
-      if (!pkg) continue;
-      if (typeof pkg.license === 'string') return pkg.license;
-      if (pkg.license && pkg.license.type) return pkg.license.type;
-      if (Array.isArray(pkg.licenses) && pkg.licenses.length) {
-        return pkg.licenses.map((l) => (typeof l === 'string' ? l : l.type)).filter(Boolean).join(' OR ');
-      }
-    } catch {
-      // Ignore unreadable package and continue.
-    }
-  }
-  return null;
 }
 
 function classify(license, allow, deny) {
